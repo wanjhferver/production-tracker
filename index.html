@@ -1,0 +1,256 @@
+<!-- AI生成 -->
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+<title>产线小时达成录入</title>
+<link rel="stylesheet" href="css/styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+</head>
+<body>
+<p data-aigc-mark="1" style="margin:0 0 8px;font-size:10px;line-height:1.3;color:#6b6560;font-weight:400;">AI生成</p>
+
+<div class="header">
+  <div class="header-row">
+    <h1>📊 产线小时达成录入</h1>
+    <div class="sync-badge" id="syncBadge" title="存储模式"><span class="dot"></span><span id="syncText">本地</span></div>
+  </div>
+  <div class="date" id="currentDate"></div>
+</div>
+
+<div class="tabs">
+  <div class="tab active" data-tab="input" onclick="App.switchTab('input')">📝 录入</div>
+  <div class="tab" data-tab="board" onclick="App.switchTab('board')">📊 看板</div>
+  <div class="tab" data-tab="report" onclick="App.switchTab('report')">📈 报告</div>
+  <div class="tab" data-tab="admin" onclick="App.switchTab('admin')">⚙️ 管理</div>
+</div>
+
+<div class="container" id="page-input">
+  <div class="form-section">
+    <h3>基本信息</h3>
+    <div class="form-row">
+      <label>日期</label>
+      <input type="date" id="recordDate">
+    </div>
+    <div class="form-row">
+      <label>班次</label>
+      <select id="shiftSelect" onchange="App.onShiftChange()">
+        <option value="白班">白班</option>
+        <option value="夜班">夜班</option>
+        <option value="自定义">自定义开班</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>开班时间</label>
+      <select id="startTimeSelect" onchange="App.rebuildGrid()">
+        <option value="7">7:00（提前开班）</option>
+        <option value="8" selected>8:00（正常开班）</option>
+        <option value="9">9:00</option>
+        <option value="10">10:00</option>
+        <option value="11">11:00</option>
+        <option value="12">12:00</option>
+        <option value="13">13:00</option>
+        <option value="14">14:00</option>
+        <option value="15">15:00</option>
+        <option value="16">16:00</option>
+        <option value="17">17:00</option>
+        <option value="18">18:00</option>
+        <option value="19">19:00</option>
+        <option value="20">20:00（夜班开班）</option>
+        <option value="21">21:00</option>
+        <option value="22">22:00</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>线体</label>
+      <select id="lineSelect" onchange="App.rebuildGrid()"></select>
+    </div>
+    <div class="form-actions">
+      <button type="button" class="btn btn-primary" onclick="App.rebuildGrid()">🔄 刷新时段</button>
+      <button type="button" class="btn btn-ghost" onclick="App.pullRemote()">☁️ 拉取在线数据</button>
+    </div>
+  </div>
+
+  <div class="summary" id="summarySection" style="display:none">
+    <div class="summary-item">
+      <div class="summary-label">当班累计目标</div>
+      <div class="summary-value" id="totalTarget">0</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-label">当班累计达成</div>
+      <div class="summary-value" id="totalAchieved">0</div>
+    </div>
+    <div class="summary-item">
+      <div class="summary-label">当班达成率</div>
+      <div class="summary-rate" id="totalRate">0%</div>
+    </div>
+  </div>
+
+  <div class="form-section hidden" id="timeSection">
+    <h3>小时达成录入 <span class="hint">未达标须选异常类别；休息分钟按比例折算目标</span></h3>
+    <div class="time-grid" id="timeGrid"></div>
+  </div>
+
+  <div id="submitSection" class="hidden">
+    <button class="btn btn-primary btn-block" onclick="App.saveData()">💾 保存数据</button>
+    <button class="btn btn-success btn-block" onclick="App.switchTab('board')">📊 查看看板</button>
+  </div>
+</div>
+
+<div class="container hidden" id="page-board">
+  <div class="form-section">
+    <h3>在线看板</h3>
+    <div class="form-row">
+      <label>日期</label>
+      <input type="date" id="boardDate">
+    </div>
+    <div class="form-row">
+      <label>班次筛选</label>
+      <select id="boardShift">
+        <option value="">全部</option>
+        <option value="白班">白班</option>
+        <option value="夜班">夜班</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>线体</label>
+      <select id="boardLine">
+        <option value="">全部线体</option>
+      </select>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="App.renderBoard()">🔄 刷新看板</button>
+      <button class="btn btn-purple" onclick="Export.boardLongImage()">📸 看板长图</button>
+      <button class="btn btn-ghost" onclick="App.pullRemote()">☁️ 拉取在线</button>
+      <button class="btn btn-ghost" onclick="App.pushRemote()">⬆️ 推送到在线</button>
+    </div>
+  </div>
+  <div id="boardContent">
+    <div class="empty-state"><div class="icon">📊</div><p>请选择日期查看看板</p></div>
+  </div>
+</div>
+
+<div class="container hidden" id="page-report">
+  <div class="form-section">
+    <h3>日期范围报告</h3>
+    <div class="form-row">
+      <label>开始日期</label>
+      <input type="date" id="reportStart">
+    </div>
+    <div class="form-row">
+      <label>结束日期</label>
+      <input type="date" id="reportEnd">
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-primary" onclick="Export.capacityReport()">📊 产能达成报表</button>
+      <button class="btn btn-danger" onclick="Export.lossReport()">📋 产量达成与异常损失报告</button>
+    </div>
+    <p class="hint" style="margin-top:10px">报告基于当前本地+已同步数据生成，导出为 PNG 长图。</p>
+  </div>
+</div>
+
+<div class="container hidden" id="page-admin">
+  <div class="form-section" id="adminLock">
+    <h3>🔐 管理后台</h3>
+    <div class="form-row">
+      <label>密码</label>
+      <input type="password" id="adminPassword" placeholder="输入管理密码" onkeypress="if(event.key==='Enter')App.unlockAdmin()">
+    </div>
+    <button class="btn btn-primary btn-block" onclick="App.unlockAdmin()">🔓 验证</button>
+  </div>
+
+  <div id="adminContent" class="hidden">
+    <div class="stats">
+      <div class="stat-card"><div class="value" id="statCount">0</div><div class="label">SMT编码数</div></div>
+      <div class="stat-card"><div class="value" id="statAvg">0</div><div class="label">平均UPH</div></div>
+      <div class="stat-card"><div class="value" id="statMax">0</div><div class="label">最高UPH</div></div>
+      <div class="stat-card"><div class="value" id="statMin">0</div><div class="label">最低UPH</div></div>
+    </div>
+
+    <div class="form-section">
+      <h3>☁️ 在线协同（数据库）</h3>
+      <p class="hint">配置后，任何人打开本页即可读写同一份数据（类似对方站点 Supabase 方案）。</p>
+      <div class="form-row">
+        <label>模式</label>
+        <select id="storeMode">
+          <option value="local">仅本地 localStorage</option>
+          <option value="supabase">Supabase 云端（推荐）</option>
+          <option value="rest">自定义 REST 接口</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Supabase URL</label>
+        <input type="text" id="sbUrl" placeholder="https://xxxx.supabase.co">
+      </div>
+      <div class="form-row">
+        <label>Anon Key</label>
+        <input type="password" id="sbKey" placeholder="sb_publishable_... 或 anon key">
+      </div>
+      <div class="form-row">
+        <label>REST 前缀</label>
+        <input type="text" id="restBase" placeholder="https://api.example.com（可选，自定义模式）">
+      </div>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="App.saveCloudConfig()">💾 保存云端配置</button>
+        <button class="btn btn-success" onclick="App.testCloud()">🧪 测试连接</button>
+        <button class="btn btn-ghost" onclick="App.showSql()">📋 查看建表 SQL</button>
+      </div>
+      <pre id="sqlBox" class="sql-box hidden"></pre>
+    </div>
+
+    <div class="form-section">
+      <h3>数据同步</h3>
+      <div class="btn-row">
+        <button class="btn btn-primary" onclick="App.pullRemote()">⬇️ 拉取在线 → 本地</button>
+        <button class="btn btn-success" onclick="App.pushRemote()">⬆️ 本地 → 在线</button>
+        <button class="btn btn-ghost" onclick="App.exportBackup()">📤 导出备份 JSON</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('importFile').click()">📥 导入备份</button>
+        <input type="file" id="importFile" accept=".json" class="hidden" onchange="App.importBackup(event)">
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>线体管理</h3>
+      <div class="form-row">
+        <label>线体名称</label>
+        <input type="text" id="newLineName" placeholder="如 SMT8线">
+      </div>
+      <button class="btn btn-primary" onclick="App.addLine()">➕ 添加线体</button>
+      <div id="lineList" class="line-list"></div>
+    </div>
+
+    <div class="form-section">
+      <h3>SMT 编码 / 目标 UPH</h3>
+      <textarea id="importData" rows="4" placeholder='粘贴 JSON：[{"smt编码":"xxx","UPH":123}, ...]'></textarea>
+      <div class="btn-row">
+        <button class="btn btn-success" onclick="App.importCodes()">📥 导入编码</button>
+        <button class="btn btn-ghost" onclick="App.exportCodes()">📤 导出编码</button>
+        <button class="btn btn-warning" onclick="App.resetCodes()">🔄 恢复默认</button>
+        <button class="btn btn-danger" onclick="App.clearCodes()">🗑️ 清空编码</button>
+      </div>
+      <div class="form-row" style="margin-top:12px">
+        <label>编码</label>
+        <input type="text" id="newCode" placeholder="SMT编码">
+        <input type="number" id="newUph" placeholder="UPH" style="max-width:100px">
+      </div>
+      <button class="btn btn-primary" onclick="App.addCode()">+ 添加/更新</button>
+      <input type="text" id="searchInput" placeholder="🔍 搜索编码…" oninput="App.renderCodeTable()" style="width:100%;margin:12px 0;padding:10px;border:1px solid #ddd;border-radius:8px">
+      <table class="table">
+        <thead><tr><th>序号</th><th>SMT编码</th><th>目标UPH</th><th>操作</th></tr></thead>
+        <tbody id="codeTable"></tbody>
+      </table>
+      <div class="pagination" id="pagination"></div>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="js/smt-data.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/export.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
