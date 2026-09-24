@@ -1542,7 +1542,7 @@ function addSavedRow(slot, record, shift) {
             <div class="form-row">
                 <div class="form-group" style="position:relative;">
                     <label>型号（输入编码可模糊匹配）</label>
-                    <input type="text" class="smt-code-input" value="${record.smt_code}" oninput="onCodeInput(this)" onblur="setTimeout(()=>hideMatchList(this),200)">
+                    <input type="text" class="smt-code-input" value="${record.smt_code}" oninput="onCodeInput(this)" onblur="setTimeout(()=><input type="hidden" class="target-value" value="${record.target_value || 0}">hideMatchList(this),200)">
                     <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
                 </div>
                 <div class="form-group">
@@ -1893,6 +1893,7 @@ function createInputRow(presetSlot = '', isSubSlot = false, parentSlot = null) {
             <div class="form-group" style="position:relative;">
                 <label>型号（输入编码可模糊匹配）</label>
                 <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=>hideMatchList(this),200)">
+                <input type="hidden" class="target-value" value="">
                 <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
             </div>
             <div class="form-group">
@@ -1946,37 +1947,57 @@ function onCodeInput(el) {
     const row = el.closest('.input-row') || el.closest('.saved-row');
     if (!row) return;
     const input = el.value.trim();
-    const matchList = row.querySelector('.match-list');
-    const targetInput = row.querySelector('.target-value');
-    if (!matchList || !targetInput) return;
+    let matchList = row.querySelector('.match-list');
+    let targetInput = row.querySelector('.target-value');
+    // 缺 match-list 时动态补一个，避免匹配列表无法显示
+    if (!matchList) {
+        const wrap = el.closest('.form-group') || row;
+        if (!getComputedStyle(wrap).position || getComputedStyle(wrap).position === 'static') {
+            wrap.style.position = 'relative';
+        }
+        matchList = document.createElement('div');
+        matchList.className = 'match-list';
+        matchList.style.cssText = 'display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.1);';
+        wrap.appendChild(matchList);
+    }
+    if (!targetInput) {
+        targetInput = document.createElement('input');
+        targetInput.type = 'hidden';
+        targetInput.className = 'target-value';
+        (el.closest('.form-group') || row).appendChild(targetInput);
+    }
 
     if (!input) {
         matchList.style.display = 'none';
         targetInput.value = '';
         return;
     }
-    
+
+    if (!SMT_CODES || !Object.keys(SMT_CODES).length) {
+        loadSmtCodes();
+    }
+
     // 模糊匹配
     const matches = Object.entries(SMT_CODES)
         .filter(([code]) => code.includes(input))
         .slice(0, 10);
-    
+
     if (matches.length === 0) {
         matchList.style.display = 'none';
         targetInput.value = '';
         return;
     }
-    
+
     // 如果精确匹配，直接填充
     if (matches.length === 1 && matches[0][0] === input) {
         targetInput.value = matches[0][1];
         matchList.style.display = 'none';
         return;
     }
-    
+
     // 显示匹配列表
-    matchList.innerHTML = matches.map(([code, uph]) => 
-        `<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:13px;" 
+    matchList.innerHTML = matches.map(([code, uph]) =>
+        `<div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid #f0f0f0;font-size:13px;"
               onmousedown="selectMatch(this, '${code}', ${uph})">
             <strong>${code}</strong> <span style="color:#6b7280;float:right;">UPH: ${uph}</span>
         </div>`
