@@ -490,18 +490,18 @@ a { color: var(--brand); }
             <div class="form-row">
                 <div class="form-group">
                     <label>日期</label>
-                    <input type="date" id="record-date" onchange="updateTimeSlots()">
+                    <input type="date" id="record-date" onchange="onFormMetaChange()">
                 </div>
                 <div class="form-group">
                     <label>班次</label>
-                    <select id="shift" onchange="updateTimeSlots()">
+                    <select id="shift" onchange="onFormMetaChange()">
                         <option value="白班">白班 (8:00-20:00)</option>
                         <option value="夜班">夜班 (20:00-8:00)</option>
                     </select>
                 </div>
                 <div class="form-group">
                     <label>线体</label>
-                    <select id="line-name" onchange="updateTimeSlots()">
+                    <select id="line-name" onchange="onFormMetaChange()">
                         <option value="">请选择线体</option>
                         <option value="SMT1线">SMT1线</option>
                         <option value="SMT2线">SMT2线</option>
@@ -517,6 +517,7 @@ a { color: var(--brand); }
                     <button type="button" onclick="updateTimeSlots()" style="background:#2563eb;color:white;border:none;padding:6px 12px;border-radius:6px;font-size:13px;cursor:pointer;white-space:nowrap;">🔄 刷新</button>
                 </div>
             </div>
+            <div id="fill-status" style="display:none;margin-top:4px;padding:10px 14px;border-radius:10px;background:#eff6ff;border:1px solid #bfdbfe;font-size:13px;color:#1e40af;font-weight:600;"></div>
         </div>
 
         <div class="card" id="input-card">
@@ -536,504 +537,7 @@ a { color: var(--brand); }
                     <div id="summary-rate" style="font-size:24px;font-weight:bold;">0%</div>
                 </div>
             </div>
-            <div id="input-rows"><div class="saved-row" data-slot="8:00-9:00" data-parent-slot="8:00-9:00" data-is-sub-slot="false" data-expanded="false" data-record-data="{&quot;line_name&quot;:&quot;SMT1线&quot;,&quot;smt_code&quot;:&quot;17175000003459&quot;,&quot;target_value&quot;:1845,&quot;achieved_value&quot;:11109,&quot;reason_category&quot;:&quot;&quot;,&quot;reason&quot;:&quot;&quot;,&quot;hour_slot&quot;:&quot;8:00-9:00&quot;,&quot;shift&quot;:&quot;白班&quot;,&quot;record_date&quot;:&quot;2026-09-24&quot;,&quot;rest_minutes&quot;:0}">
-        <div class="time-slot-header saved-header" onclick="toggleSavedRow(this)" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
-            <span>
-                <span class="toggle-icon" style="margin-right:8px;font-size:12px;">▶</span>
-                8:00-9:00
-            </span>
-            <span style="font-size:13px;color:#16a34a;">
-                达成: 11109/1845 (602.1%)
-            </span>
-        </div>
-        <div class="saved-detail" style="display:none;padding:12px 0 0 0;">
-            <div class="form-row">
-                <div class="form-group" style="position:relative;">
-                    <label>型号（输入编码可模糊匹配）</label>
-                    <input type="text" class="smt-code-input" value="17175000003459" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                    <input type="hidden" class="target-value" value="1845">
-                    <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-                </div>
-                <div class="form-group">
-                    <label>达成数</label>
-                    <input type="number" class="achieved-value" value="11109" oninput="checkUnderTarget(this); updateShiftSummary()">
-                </div>
-            </div>
-            <div class="form-row">
-                <div class="form-group">
-                    <label>休息分钟数</label>
-                    <input type="number" class="rest-minutes" value="0" min="0" max="60">
-                </div>
-                <div class="form-group">
-                    <label class="category-label">异常类别</label>
-                    <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                        <option value="">请选择</option>
-                        <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                    </select>
-                </div>
-                <div class="form-group" style="flex:2;">
-                    <label>未达标原因</label>
-                    <input type="text" class="reason" value="" placeholder="异常原因（选填，可作为补充说明）">
-                </div>
-            </div>
-            <div class="form-row" style="margin-top:12px;">
-                <div class="form-group" style="flex:none;">
-                    <button type="button" onclick="editSavedRecord(this)" style="background:#f59e0b;color:white;border:none;padding:8px 16px;border-radius:6px;font-size:13px;cursor:pointer;">✏️ 修改</button>
-                </div>
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="9:00-10:00" data-parent-slot="9:00-10:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="9:00-10:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>9:00-10:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="10:00-11:00" data-parent-slot="10:00-11:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="10:00-11:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>10:00-11:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="11:00-12:00" data-parent-slot="11:00-12:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="11:00-12:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>11:00-12:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="12:00-13:00" data-parent-slot="12:00-13:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="12:00-13:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>12:00-13:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="13:00-14:00" data-parent-slot="13:00-14:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="13:00-14:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>13:00-14:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="14:00-15:00" data-parent-slot="14:00-15:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="14:00-15:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>14:00-15:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="15:00-16:00" data-parent-slot="15:00-16:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="15:00-16:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>15:00-16:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="16:00-17:00" data-parent-slot="16:00-17:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="16:00-17:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>16:00-17:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="17:00-18:00" data-parent-slot="17:00-18:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="17:00-18:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>17:00-18:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="18:00-19:00" data-parent-slot="18:00-19:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="18:00-19:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>18:00-19:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div><div class="input-row" data-slot="19:00-20:00" data-parent-slot="19:00-20:00" data-is-sub-slot="false">
-        <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
-            <input type="hidden" class="hour-slot" value="19:00-20:00">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>19:00-20:00</span>
-                <div style="display:flex;gap:8px;align-items:center;">
-                    
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
-                    
-                    
-                </div>
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="position:relative;">
-                <label>型号（输入编码可模糊匹配）</label>
-                <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=&gt;hideMatchList(this),200)">
-                <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
-            </div>
-            <div class="form-group">
-                <label>达成数</label>
-                <input type="number" class="achieved-value" placeholder="输入达成数" oninput="checkUnderTarget(this); updateShiftSummary()">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
-            </div>
-            <div class="form-group">
-                <label class="category-label">异常类别</label>
-                <select class="reason-category" onchange="onCategoryChange(this); updateShiftSummary()">
-                    <option value="">请选择</option>
-                    <option value="无">无</option><option value="来料异常">来料异常</option><option value="物流配送">物流配送</option><option value="换型损失">换型损失</option><option value="爬坡损失">爬坡损失</option><option value="设备故障">设备故障</option><option value="流水线异常">流水线异常</option><option value="人员异常">人员异常</option><option value="试制试产">试制试产</option><option value="支援">支援</option><option value="其他">其他</option>
-                </select>
-            </div>
-            <div class="form-group" style="flex:2;">
-                <label>未达标原因</label>
-                <input type="text" class="reason" placeholder="异常原因（选填，可作为补充说明）">
-            </div>
-        </div>
-    </div></div>
+            <div id="input-rows"></div>
             <div style="text-align:center;margin-top:20px;">
                 <button class="btn btn-success" onclick="saveAllRecords()" style="width:300px;padding:14px 20px;font-size:16px;">💾 保存数据</button>
             </div>
@@ -1422,16 +926,22 @@ async function syncRecordsFromDB() {
         const { data, error } = await db.from('records').select('*');
         if (error) throw error;
         if (data) {
+            const lastLine = localStorage.getItem('pt_last_line') || '';
             data.forEach(row => {
-                const key = 'record_' + row.line_name + '_' + row.record_date + '_' + row.hour_slot;
+                // 兼容历史脏数据：line_name 为空时用上次线体
+                let lineName = (row.line_name || '').trim();
+                if (!lineName) lineName = lastLine || '';
+                if (!lineName) return;
+                const date = String(row.record_date).slice(0, 10);
+                const key = 'record_' + lineName + '_' + date + '_' + row.hour_slot;
                 let localRest = 0;
                 try {
                     const prev = JSON.parse(localStorage.getItem(key) || 'null');
                     if (prev && prev.rest_minutes) localRest = prev.rest_minutes;
                 } catch (_) {}
                 const record = {
-                    line_name: row.line_name,
-                    record_date: String(row.record_date).slice(0, 10),
+                    line_name: lineName,
+                    record_date: date,
                     hour_slot: row.hour_slot,
                     smt_code: row.smt_code,
                     target_value: row.target_value,
@@ -1439,7 +949,7 @@ async function syncRecordsFromDB() {
                     reason_category: row.reason_category || '',
                     reason: row.reason || '',
                     rest_minutes: (row.rest_minutes != null ? row.rest_minutes : localRest) || 0,
-                    shift: row.shift || '白班'
+                    shift: row.shift || inferShiftFromSlot(row.hour_slot)
                 };
                 localStorage.setItem(key, JSON.stringify(record));
             });
@@ -1449,6 +959,13 @@ async function syncRecordsFromDB() {
         console.warn('同步记录失败:', e);
         throw e;
     }
+}
+
+function inferShiftFromSlot(slot) {
+    const h = parseInt(String(slot), 10);
+    if (!isNaN(h) && h >= 20) return '夜班';
+    if (!isNaN(h) && h < 8) return '夜班';
+    return '白班';
 }
 
 function recordPayload(record) {
@@ -1579,6 +1096,7 @@ function setupRealtimeSync() {
                     // 自动刷新录入页面
                     updateTimeSlots();
                     updateShiftSummary();
+                    updateFillStatus();
                 }
             })
             .on('postgres_changes', { event: '*', schema: 'public', table: 'smt_codes' }, (payload) => {
@@ -1638,6 +1156,7 @@ async function initCloudSync() {
             updateTimeSlots();
             updateShiftSummary();
             updateStats();
+            updateFillStatus();
             return true;
         } catch (e) {
             lastCloudError = e.message || String(e);
@@ -1693,37 +1212,126 @@ const pageSize = 20;
 
 // 初始化
 document.addEventListener('DOMContentLoaded', function() {
-    // 设置默认日期为今天，显示在头部
-    const today = new Date();
-    const todayStr = today.toISOString().split('T')[0];
-    const displayDate = `${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日`;
+    // 设置默认日期为今天，显示在头部（本地时区，避免 UTC 偏移）
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const todayStr = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}`;
+    const displayDate = `${now.getFullYear()}年${now.getMonth()+1}月${now.getDate()}日`;
     document.getElementById('header-date').textContent = displayDate;
     document.getElementById('dashboard-date').value = todayStr;
     document.getElementById('dashboard-date').max = todayStr;
     document.getElementById('record-date').value = todayStr;
     document.getElementById('record-date').max = todayStr;
-    
+
     // 设置报告日期范围：开始日期和结束日期都默认为今天
     document.getElementById('report-start-date').value = todayStr;
     document.getElementById('report-start-date').max = todayStr;
     document.getElementById('report-end-date').value = todayStr;
     document.getElementById('report-end-date').max = todayStr;
-    
+
     // 加载SMT编码数据
     loadSmtCodes();
-    
-    // 添加第一行录入
-    addInputRow();
-    
+
+    // 恢复上次填写的选择（日期/班次/线体）
+    restoreFormMeta();
+
     // 更新管理后台统计
     updateStats();
-    
+
+    // 按恢复的选择渲染录入区（显示已填/未填）
+    updateTimeSlots();
+
     // 更新当班累计统计
     updateShiftSummary();
-    
-    // 异步初始化云端同步
-    initCloudSync();
+
+    // 异步初始化云端同步（成功后再刷一次录入区）
+    initCloudSync().then(() => {
+        updateTimeSlots();
+        updateFillStatus();
+    });
 });
+
+const PT_META_KEY = 'pt_form_meta';
+
+function persistFormMeta() {
+    try {
+        localStorage.setItem(PT_META_KEY, JSON.stringify({
+            date: document.getElementById('record-date').value,
+            shift: document.getElementById('shift').value,
+            line: document.getElementById('line-name').value
+        }));
+        const line = document.getElementById('line-name').value;
+        if (line) localStorage.setItem('pt_last_line', line);
+    } catch (e) {}
+}
+
+function restoreFormMeta() {
+    try {
+        const raw = localStorage.getItem(PT_META_KEY);
+        if (!raw) {
+            // 若无 meta，但有记录，自动带上 last line
+            const lastLine = localStorage.getItem('pt_last_line');
+            if (lastLine) document.getElementById('line-name').value = lastLine;
+            return;
+        }
+        const meta = JSON.parse(raw);
+        if (meta.date) document.getElementById('record-date').value = meta.date;
+        if (meta.shift) document.getElementById('shift').value = meta.shift;
+        if (meta.line) {
+            document.getElementById('line-name').value = meta.line;
+            localStorage.setItem('pt_last_line', meta.line);
+        }
+    } catch (e) {
+        console.warn('restoreFormMeta', e);
+    }
+}
+
+function onFormMetaChange() {
+    persistFormMeta();
+    updateTimeSlots();
+    updateFillStatus();
+}
+
+function countLocalRecords(line, date) {
+    if (!line || !date) return { filled: 0, total: 0, slots: [] };
+    const slots = (document.getElementById('shift').value === '夜班') ? NIGHT_SLOTS : DAY_SLOTS;
+    let filled = 0;
+    const filledSlots = [];
+    slots.forEach(slot => {
+        const key = `record_${line}_${date}_${slot}`;
+        if (localStorage.getItem(key)) {
+            filled++;
+            filledSlots.push(slot);
+        }
+    });
+    return { filled, total: slots.length, slots: filledSlots };
+}
+
+function updateFillStatus() {
+    const el = document.getElementById('fill-status');
+    if (!el) return;
+    const date = document.getElementById('record-date').value;
+    const line = document.getElementById('line-name').value;
+    const shift = document.getElementById('shift').value;
+    if (!date || !line) {
+        el.style.display = 'none';
+        return;
+    }
+    el.style.display = 'block';
+    const { filled, total, slots } = countLocalRecords(line, date);
+    const pct = total > 0 ? Math.round(filled / total * 100) : 0;
+    const color = filled === 0 ? '#b91c1c' : (filled < total ? '#b45309' : '#15803d');
+    const bg = filled === 0 ? '#fef2f2' : (filled < total ? '#fffbeb' : '#f0fdf4');
+    const border = filled === 0 ? '#fecaca' : (filled < total ? '#fde68a' : '#bbf7d0');
+    el.style.background = bg;
+    el.style.borderColor = border;
+    el.style.color = color;
+    el.innerHTML = `📋 当前填写进度：已填 <b>${filled}/${total}</b> 时段（${pct}%）` +
+        (filled > 0 ? `　<span style="font-weight:500;opacity:.85">${slots.join('、')}</span>` : '　尚未保存任何时段') +
+        `<div style="margin-top:6px;height:6px;background:#e5e7eb;border-radius:99px;overflow:hidden;">
+            <div style="height:100%;width:${pct}%;background:${color};border-radius:99px;transition:width .3s;"></div>
+        </div>`;
+}
 
 // 加载SMT编码数据
 function loadSmtCodes() {
@@ -1773,6 +1381,8 @@ function switchTab(tab) {
     
     if (tab === 'input') {
         document.getElementById('input-page').classList.remove('hidden');
+        updateTimeSlots();
+        updateFillStatus();
     } else if (tab === 'dashboard') {
         document.getElementById('dashboard-page').classList.remove('hidden');
         loadDashboard();
@@ -1811,24 +1421,27 @@ function updateTimeSlots() {
     const date = document.getElementById('record-date').value;
     const shift = document.getElementById('shift').value;
     const line = document.getElementById('line-name').value;
-    
+
     // 检查基本信息是否填写完整
     if (date && shift && line) {
         // 显示录入卡片
         document.getElementById('input-card').classList.remove('hidden');
-        
+
         // 清空现有录入行
         document.getElementById('input-rows').innerHTML = '';
-        
+
         // 根据班次生成时段列表
         const slots = shift === '白班' ? DAY_SLOTS : NIGHT_SLOTS;
-        
+
         // 自动添加所有时段，检查是否已录入
         slots.forEach(slot => {
             const key = `record_${line}_${date}_${slot}`;
-            const existingRecord = JSON.parse(localStorage.getItem(key) || 'null');
-            
-            if (existingRecord) {
+            let existingRecord = null;
+            try {
+                existingRecord = JSON.parse(localStorage.getItem(key) || 'null');
+            } catch (_) {}
+
+            if (existingRecord && existingRecord.smt_code) {
                 // 已录入，显示折叠状态
                 addSavedRow(slot, existingRecord, shift);
             } else {
@@ -1836,9 +1449,20 @@ function updateTimeSlots() {
                 addInputRow(slot);
             }
         });
-        
+
         // 更新当班累计统计
         updateShiftSummary();
+        updateFillStatus();
+        persistFormMeta();
+    } else {
+        const fs = document.getElementById('fill-status');
+        if (fs) {
+            fs.style.display = 'block';
+            fs.style.background = '#f8fafc';
+            fs.style.borderColor = '#e2e8f0';
+            fs.style.color = '#64748b';
+            fs.innerHTML = '请选择 <b>日期 / 班次 / 线体</b> 后查看填写进度';
+        }
     }
 }
 
@@ -2553,8 +2177,12 @@ async function saveAllRecordsAsync() {
 
     alert(`成功保存 ${records.length} 条记录！\n${cloudMsg}`);
 
-    // 更新累计统计
+    // 更新累计统计与进度
     updateShiftSummary();
+    updateFillStatus();
+    persistFormMeta();
+    // 重绘时段列表，显示「已填写」状态
+    updateTimeSlots();
 }
 
 // 将录入行转换为已保存的折叠行
