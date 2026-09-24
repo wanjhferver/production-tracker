@@ -1315,21 +1315,61 @@ const SUPABASE_URL = 'https://ksjkrldxinxalghtxyyl.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzamtybGR4aW54YWxnaHR4eXlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNTY1ODcsImV4cCI6MjEwNTYzMjU4N30.6sTtbWLoxrDmW5Mprvy3yG9uSCBnsb2IP-28JnK62qU';
 let db = null;
 let dbReady = false;
+let lastCloudError = '';
+
+async function probeSupabase(timeoutMs = 8000) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+        const res = await fetch(SUPABASE_URL + '/rest/v1/smt_codes?select=id&limit=1', {
+            headers: {
+                apikey: SUPABASE_ANON_KEY,
+                Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+                Accept: 'application/json'
+            },
+            signal: ctrl.signal
+        });
+        clearTimeout(t);
+        if (!res.ok) {
+            const body = await res.text();
+            throw new Error('HTTP ' + res.status + ' ' + body.slice(0, 160));
+        }
+        return true;
+    } catch (e) {
+        clearTimeout(t);
+        if (e.name === 'AbortError') throw new Error('连接超时（' + (timeoutMs / 1000) + 's）— 手机网络可能访问不了 supabase.co');
+        if (e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(e.message || '')) {
+            throw new Error('网络无法访问 supabase.co（运营商拦截/未开代理/GitHub页与云端不通）');
+        }
+        throw e;
+    }
+}
 
 async function initSupabase() {
+    lastCloudError = '';
     try {
-        db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        const { error } = await db.from('smt_codes').select('id').limit(1);
-        if (error) {
-            console.warn('Supabase连接失败:', error.message);
-            dbReady = false;
-        } else {
-            dbReady = true;
+        // 先用原生 fetch 探测，错误信息更清晰
+        await probeSupabase(8000);
+        if (!db && window.supabase && window.supabase.createClient) {
+            db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        }
+        dbReady = !!db;
+        if (dbReady) {
             console.log('✅ Supabase连接成功');
+        } else {
+            lastCloudError = 'supabase-js 未加载（CDN失败）';
+            dbReady = false;
         }
     } catch (e) {
+        lastCloudError = e.message || String(e);
         console.warn('Supabase初始化失败:', e);
         dbReady = false;
+        // 再试一次 CDN client（即使探测失败也可重试）
+        try {
+            if (window.supabase && window.supabase.createClient && !db) {
+                db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+            }
+        } catch (_) {}
     }
 }
 
@@ -1561,33 +1601,52 @@ function showDbStatus(status, detail) {
     const el = document.getElementById('db-status');
     if (!el) return;
     if (status === 'connected') {
-        el.innerHTML = '<span style="color:#4ade80;">● 云端同步已连接</span>';
+        el.innerHTML = '<span style="color:#4ade80;">● 云端同步已连接</span> <button type="button" onclick="reconnectCloud()" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;cursor:pointer;">重测</button>';
     } else if (status === 'syncing') {
-        el.innerHTML = '<span style="color:#fbbf24;">● 正在同步数据...</span>';
+        el.innerHTML = '<span style="color:#fbbf24;">● 正在连接云端...</span>';
     } else if (status === 'local' && detail) {
-        el.innerHTML = '<span style="color:#f87171;">● ' + detail + '</span>';
+        el.innerHTML = '<span style="color:#fca5a5;">● ' + String(detail).replace(/</g, '&lt;') + '</span> <button type="button" onclick="reconnectCloud()" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;cursor:pointer;">重试</button>';
+    } else if (status === 'local') {
+        el.innerHTML = '<span style="color:#9ca3af;">● 本地模式</span> <button type="button" onclick="reconnectCloud()" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;cursor:pointer;">连接云端</button>';
     } else {
-        el.innerHTML = '<span style="color:#9ca3af;">● 本地模式（未连接云端）</span>';
+        el.innerHTML = '<span style="color:#fde68a;">● 正在连接云端…</span>';
     }
+}
+
+async function reconnectCloud() {
+    showDbStatus('syncing');
+    const ok = await initCloudSync();
+    if (!ok && lastCloudError) {
+        showDbStatus('local', lastCloudError);
+    }
+    return ok;
 }
 
 async function initCloudSync() {
     showDbStatus('syncing');
     await initSupabase();
     if (dbReady) {
-        const cloudHasData = await syncSmtCodesFromDB();
-        if (!cloudHasData && Object.keys(SMT_CODES).length > 0) {
-            await syncSmtCodesToDB();
+        try {
+            const cloudHasData = await syncSmtCodesFromDB();
+            if (!cloudHasData && Object.keys(SMT_CODES).length > 0) {
+                await syncSmtCodesToDB();
+            }
+            await syncRecordsFromDB();
+            showDbStatus('connected');
+            setupRealtimeSync();
+            // 刷新UI
+            updateTimeSlots();
+            updateShiftSummary();
+            updateStats();
+            return true;
+        } catch (e) {
+            lastCloudError = e.message || String(e);
+            showDbStatus('local', '同步失败: ' + lastCloudError);
+            return false;
         }
-        await syncRecordsFromDB();
-        showDbStatus('connected');
-        setupRealtimeSync();
-        // 刷新UI
-        updateTimeSlots();
-        updateShiftSummary();
-        updateStats();
     } else {
-        showDbStatus('local');
+        showDbStatus('local', lastCloudError || '无法连接云端');
+        return false;
     }
 }
 
