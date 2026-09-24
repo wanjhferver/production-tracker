@@ -1429,10 +1429,14 @@ function recordPayload(record) {
 async function uploadRecordToDB(record) {
     if (!dbReady) return false;
     try {
-        const { error } = await db.from('records').upsert(
-            recordPayload(record),
-            { onConflict: 'line_name,record_date,hour_slot' }
-        );
+        // 表无唯一约束时 upsert(onConflict) 会报错：先删再插
+        const { error: delErr } = await db.from('records')
+            .delete()
+            .eq('line_name', record.line_name)
+            .eq('record_date', record.record_date)
+            .eq('hour_slot', record.hour_slot);
+        if (delErr) throw delErr;
+        const { error } = await db.from('records').insert(recordPayload(record));
         if (error) throw error;
         showDbStatus('connected');
         return true;
@@ -1446,11 +1450,24 @@ async function uploadRecordToDB(record) {
 async function uploadRecordsBatch(records) {
     if (!dbReady || !records.length) return { ok: false, skipped: true, count: 0 };
     try {
-        const { error } = await db.from('records').upsert(
-            records.map(recordPayload),
-            { onConflict: 'line_name,record_date,hour_slot' }
-        );
-        if (error) throw error;
+        // 按「线体+日期」整组覆盖，避免依赖 ON CONFLICT 唯一约束
+        const groups = {};
+        records.forEach(r => {
+            const k = r.line_name + '||' + r.record_date;
+            if (!groups[k]) groups[k] = { line: r.line_name, date: r.record_date, rows: [] };
+            groups[k].rows.push(recordPayload(r));
+        });
+        for (const g of Object.values(groups)) {
+            const { error: delErr } = await db.from('records')
+                .delete()
+                .eq('line_name', g.line)
+                .eq('record_date', g.date);
+            if (delErr) throw delErr;
+            if (g.rows.length) {
+                const { error: insErr } = await db.from('records').insert(g.rows);
+                if (insErr) throw insErr;
+            }
+        }
         showDbStatus('connected');
         return { ok: true, count: records.length };
     } catch (e) {
@@ -1895,58 +1912,64 @@ function confirmSplit(slot, splitMinutes) {
     }
     
     // 保存当前行的数据
+    const _smt = currentRow.querySelector('.smt-code-input');
+    const _ach = currentRow.querySelector('.achieved-value');
+    const _rest = currentRow.querySelector('.rest-minutes');
+    const _cat = currentRow.querySelector('.reason-category');
+    const _rsn = currentRow.querySelector('.reason');
     const currentData = {
-        smtCode: currentRow.querySelector('.smt-code-input').value,
-        achieved: currentRow.querySelector('.achieved-value').value,
-        restMinutes: currentRow.querySelector('.rest-minutes').value,
-        reasonCategory: currentRow.querySelector('.reason-category').value,
-        reason: currentRow.querySelector('.reason').value
+        smtCode: _smt ? _smt.value : '',
+        achieved: _ach ? _ach.value : '',
+        restMinutes: _rest ? _rest.value : '',
+        reasonCategory: _cat ? _cat.value : '',
+        reason: _rsn ? _rsn.value : ''
     };
-    
+
     // 修改原时段行样式（标记为父时段，显示拆分状态）
     currentRow.dataset.isParent = 'true';
     const header = currentRow.querySelector('.time-slot-header');
-    header.style.background = '#fef3c7';
-    header.style.borderBottom = '2px solid #f59e0b';
-    
-    // 找到按钮容器，添加"收起/展开"按钮
-    const headerDiv = header.querySelector('div');
-    const btnContainer = headerDiv.querySelector('div:last-child');
-    btnContainer.innerHTML = `
+    if (header) {
+        header.style.background = '#fef3c7';
+        header.style.borderBottom = '2px solid #f59e0b';
+        const headerDiv = header.querySelector('div');
+        const btnContainer = headerDiv ? headerDiv.querySelector('div:last-child') : null;
+        if (btnContainer) {
+            btnContainer.innerHTML = `
         <button type="button" class="btn-toggle-subs" onclick="toggleSubSlots(this)" style="background:#f59e0b;color:white;border:none;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">收起子时段</button>
         <button type="button" class="btn-merge" onclick="mergeSubSlots(this)" style="background:#6b7280;color:white;border:none;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">合并还原</button>
     `;
-    
+        }
+    }
+
     // 创建两个新的子时段行（样式更小）
     const newRow1 = createSubSlotRow(slot1, parentSlot);
     const newRow2 = createSubSlotRow(slot2, parentSlot);
-    
+
     // 第一个子时段继承原数据
     if (currentData.smtCode) newRow1.querySelector('.smt-code-input').value = currentData.smtCode;
     newRow1.querySelector('.achieved-value').value = parseFloat(currentData.achieved) || 0;
     if (currentData.restMinutes) newRow1.querySelector('.rest-minutes').value = currentData.restMinutes;
     if (currentData.reasonCategory) newRow1.querySelector('.reason-category').value = currentData.reasonCategory;
     if (currentData.reason) newRow1.querySelector('.reason').value = currentData.reason;
-    
+
     // 第二个子时段达成数为0
     newRow2.querySelector('.achieved-value').value = 0;
-    
+
     // 在原时段行后面插入子时段
     currentRow.after(newRow2);
     newRow2.after(newRow1);
-    // 注意：after是向后插入，所以先插入row2，再插入row1，最终顺序是：原行 -> row1 -> row2
-    
+
     // 清空原时段行的数据（因为数据已经转移到子时段）
-    currentRow.querySelector('.smt-code-input').value = '';
-    currentRow.querySelector('.achieved-value').value = 0;
-    currentRow.querySelector('.rest-minutes').value = 0;
-    currentRow.querySelector('.reason-category').value = '';
-    currentRow.querySelector('.reason').value = '';
-    
+    if (_smt) _smt.value = '';
+    if (_ach) _ach.value = 0;
+    if (_rest) _rest.value = 0;
+    if (_cat) _cat.value = '';
+    if (_rsn) _rsn.value = '';
+
     // 原时段行变为只读显示状态
     const formRows = currentRow.querySelectorAll('.form-row');
     formRows.forEach(fr => fr.style.display = 'none');
-    
+
     updateShiftSummary();
 }
 
@@ -2361,6 +2384,9 @@ async function saveAllRecordsAsync() {
     const records = [];
 
     for (const row of rows) {
+        // 时段分解后的父行已清空，跳过
+        if (row.dataset.isParent === 'true') continue;
+
         // 获取时段信息：新行从hour-slot获取，已保存行从recordData获取
         let hourSlot = row.querySelector('.hour-slot')?.value;
         if (!hourSlot && row.classList.contains('saved-row')) {
@@ -2482,9 +2508,10 @@ function convertToSavedRow(row, record) {
     
     row.innerHTML = `
         <div class="time-slot-header saved-header" onclick="toggleSavedRow(this)" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
+            <input type="hidden" class="hour-slot" value="${record.hour_slot || ''}">
             <span>
                 <span class="toggle-icon" style="margin-right:8px;font-size:12px;">▶</span>
-                ${record.hour_slot}
+                ${record.hour_slot || ''}
             </span>
             <span style="font-size:13px;color:${rateColor};">
                 达成: ${record.achieved_value}/${record.target_value} (${rate}%)
@@ -2530,10 +2557,14 @@ function convertToSavedRow(row, record) {
     
     // 存储原始record数据到row的dataset中
     row.dataset.recordData = JSON.stringify(record);
-    
+
     // 如果未达标，触发标签变红
-    const achievedInput = row.querySelector('.achieved-value');
-    checkUnderTarget(achievedInput);
+    try {
+        const achievedInput = row.querySelector('.achieved-value');
+        checkUnderTarget(achievedInput);
+    } catch (e) {
+        console.warn('convertToSavedRow:', e);
+    }
 }
 
 // 折叠/展开已保存的行
