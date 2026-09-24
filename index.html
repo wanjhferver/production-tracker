@@ -1816,16 +1816,18 @@ function addSavedRow(slot, record, shift) {
 
 // 切换已保存行的展开/折叠
 function toggleSavedRow(header) {
-    const row = header.closest('.saved-row');
+    const row = header.closest('.saved-row') || header.closest('.input-row');
+    if (!row) return;
     const detail = row.querySelector('.saved-detail');
     const status = header.querySelector('span:last-child');
-    
+    if (!detail) return;
+
     if (detail.style.display === 'none') {
         detail.style.display = 'block';
-        status.textContent = '✓ 已填写 | 点击折叠';
+        if (status) status.textContent = '✓ 已填写 | 点击折叠';
     } else {
         detail.style.display = 'none';
-        status.textContent = '✓ 已填写 | 点击展开';
+        if (status) status.textContent = '✓ 已填写 | 点击展开';
     }
 }
 
@@ -2157,13 +2159,16 @@ function createInputRow(presetSlot = '', isSubSlot = false, parentSlot = null) {
 
 // 检查未达标并更新异常类别标签样式
 function checkUnderTarget(el) {
-    const row = el.closest('.input-row');
+    if (!el) return;
+    const row = el.closest('.input-row') || el.closest('.saved-row');
+    if (!row) return;
     const codeInput = row.querySelector('.smt-code-input');
-    const code = codeInput.value.trim();
+    const code = (codeInput && codeInput.value ? codeInput.value : '').trim();
     const uph = SMT_CODES[code] || 0;
     const achieved = parseInt(el.value) || 0;
     const label = row.querySelector('.category-label');
-    
+    if (!label) return;
+
     if (code && uph > 0 && achieved < uph) {
         label.innerHTML = '<span style="color:#dc2626;font-weight:600;">异常类别</span> <span style="color:#dc2626;font-size:12px;">（产量未达标必填）</span>';
     } else {
@@ -2173,11 +2178,13 @@ function checkUnderTarget(el) {
 
 // SMT编码输入 - 模糊匹配
 function onCodeInput(el) {
-    const row = el.closest('.input-row');
+    const row = el.closest('.input-row') || el.closest('.saved-row');
+    if (!row) return;
     const input = el.value.trim();
     const matchList = row.querySelector('.match-list');
     const targetInput = row.querySelector('.target-value');
-    
+    if (!matchList || !targetInput) return;
+
     if (!input) {
         matchList.style.display = 'none';
         targetInput.value = '';
@@ -2213,33 +2220,36 @@ function onCodeInput(el) {
 }
 
 function selectMatch(el, code, uph) {
-    const row = el.closest('.input-row');
+    const row = el.closest('.input-row') || el.closest('.saved-row');
+    if (!row) return;
     const input = row.querySelector('.smt-code-input');
     const targetInput = row.querySelector('.target-value');
     const matchList = row.querySelector('.match-list');
-    
+    if (!input || !targetInput) return;
+
     input.value = code;
     targetInput.value = uph;
-    matchList.style.display = 'none';
-    
+    if (matchList) matchList.style.display = 'none';
+
     // 触发未达标检查
     const achievedInput = row.querySelector('.achieved-value');
     checkUnderTarget(achievedInput);
 }
 
 function hideMatchList(el) {
-    const row = el.closest('.input-row');
+    const row = el.closest('.input-row') || el.closest('.saved-row');
+    if (!row) return;
     const matchList = row.querySelector('.match-list');
     const input = row.querySelector('.smt-code-input');
     const targetInput = row.querySelector('.target-value');
-    
-    matchList.style.display = 'none';
-    
+
+    if (matchList) matchList.style.display = 'none';
+
     // 如果输入的值精确匹配，填充目标值
-    if (SMT_CODES[input.value.trim()] !== undefined) {
+    if (input && targetInput && SMT_CODES[input.value.trim()] !== undefined) {
         targetInput.value = SMT_CODES[input.value.trim()];
     }
-    
+
     // 触发未达标检查
     const achievedInput = row.querySelector('.achieved-value');
     checkUnderTarget(achievedInput);
@@ -2247,15 +2257,19 @@ function hideMatchList(el) {
 
 // 异常类别变更
 function onCategoryChange(el) {
-    const row = el.closest('.input-row');
+    const row = el.closest('.input-row') || el.closest('.saved-row');
+    if (!row) return;
     checkExclusion(row);
 }
 
 // 检查剔除规则
 function checkExclusion(row) {
-    const category = row.querySelector('.reason-category').value;
+    if (!row) return;
+    const categoryEl = row.querySelector('.reason-category');
     const achievedInput = row.querySelector('.achieved-value');
-    
+    if (!categoryEl || !achievedInput) return;
+    const category = categoryEl.value;
+
     if (category === '试制试产' || category === '支援') {
         achievedInput.value = 0;
     }
@@ -2525,16 +2539,18 @@ function convertToSavedRow(row, record) {
 // 折叠/展开已保存的行
 function toggleSavedRow(headerEl) {
     const row = headerEl.closest('.saved-row') || headerEl.closest('.input-row');
+    if (!row) return;
     const detail = row.querySelector('.saved-detail');
     const icon = headerEl.querySelector('.toggle-icon');
-    
+    if (!detail) return;
+
     // 判断当前状态：如果detail是隐藏的，则是折叠状态
     const isCurrentlyCollapsed = detail.style.display === 'none';
-    
+
     if (isCurrentlyCollapsed) {
         // 展开
         detail.style.display = 'block';
-        icon.textContent = '▼';
+        if (icon) icon.textContent = '▼';
         // 展开时添加视觉提示，表明可编辑状态
         row.style.backgroundColor = '#fef3c7';
         setTimeout(() => {
@@ -2551,37 +2567,38 @@ function toggleSavedRow(headerEl) {
     } else {
         // 折叠
         detail.style.display = 'none';
-        icon.textContent = '▶';
+        if (icon) icon.textContent = '▶';
     }
 }
 
 // 修改已保存的记录
 function editSavedRecord(btn) {
-    const row = btn.closest('.saved-row');
+    const row = btn.closest('.saved-row') || btn.closest('.input-row');
+    if (!row || !row.dataset.recordData) return;
     const recordData = JSON.parse(row.dataset.recordData);
-    
+
     // 获取当前表单数据
-    const smtCode = row.querySelector('.smt-code-input').value.trim();
+    const smtCode = (row.querySelector('.smt-code-input')?.value || '').trim();
     const targetValue = SMT_CODES[smtCode] || 0;
-    const achievedValue = parseInt(row.querySelector('.achieved-value').value) || 0;
-    const reasonCategory = row.querySelector('.reason-category').value;
-    const reason = row.querySelector('.reason').value.trim();
-    const restMinutes = parseInt(row.querySelector('.rest-minutes').value) || 0;
-    
+    const achievedValue = parseInt(row.querySelector('.achieved-value')?.value, 10) || 0;
+    const reasonCategory = row.querySelector('.reason-category')?.value || '';
+    const reason = (row.querySelector('.reason')?.value || '').trim();
+    const restMinutes = parseInt(row.querySelector('.rest-minutes')?.value, 10) || 0;
+
     // 验证：如果达成量未达到UPH值，必须填写异常类别和未达标原因
     if (achievedValue < targetValue) {
         if (!reasonCategory) {
             alert(`时段 ${recordData.hour_slot} 达成量(${achievedValue})未达到目标值(${targetValue})，请选择异常类别`);
-            row.querySelector('.reason-category').focus();
+            row.querySelector('.reason-category')?.focus();
             return;
         }
         if (!reason) {
             alert(`时段 ${recordData.hour_slot} 达成量(${achievedValue})未达到目标值(${targetValue})，请填写未达标原因`);
-            row.querySelector('.reason').focus();
+            row.querySelector('.reason')?.focus();
             return;
         }
     }
-    
+
     // 更新record数据
     const updatedRecord = {
         ...recordData,
@@ -2592,34 +2609,33 @@ function editSavedRecord(btn) {
         reason: reason,
         rest_minutes: restMinutes
     };
-    
+
     // 保存到localStorage
     const key = `${recordData.line_name}_${recordData.record_date}_${recordData.hour_slot}`;
     localStorage.setItem(`record_${key}`, JSON.stringify(updatedRecord));
-    uploadRecordToDB(updatedRecord).then(ok => {
-        if (!ok && !dbReady) {
-            // 本地模式忽略
-        }
-    }); // 同步到云端
-    
+    uploadRecordToDB(updatedRecord); // 同步到云端
+
     // 更新row的dataset
     row.dataset.recordData = JSON.stringify(updatedRecord);
-    
+
     // 更新显示
     const rate = targetValue > 0 ? ((achievedValue / targetValue) * 100).toFixed(1) : 0;
     const rateColor = rate >= 100 ? '#16a34a' : '#dc2626';
     const header = row.querySelector('.saved-header');
-    const headerSpan = header.querySelector('span:last-child');
-    headerSpan.innerHTML = `达成: ${achievedValue}/${targetValue} (${rate}%)`;
-    headerSpan.style.color = rateColor;
-    
+    const headerSpan = header ? header.querySelector('span:last-child') : null;
+    if (headerSpan) {
+        headerSpan.innerHTML = `达成: ${achievedValue}/${targetValue} (${rate}%)`;
+        headerSpan.style.color = rateColor;
+    }
+
     // 更新target-value隐藏字段
-    row.querySelector('.target-value').value = targetValue;
-    
+    const targetInput = row.querySelector('.target-value');
+    if (targetInput) targetInput.value = targetValue;
+
     // 如果未达标，触发标签变红
     const achievedInput = row.querySelector('.achieved-value');
     checkUnderTarget(achievedInput);
-    
+
     alert(`时段 ${recordData.hour_slot} 的记录已更新！`);
 }
 
