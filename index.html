@@ -814,7 +814,7 @@ a { color: var(--brand); }
 
 <script>
 
-// ========== Supabase 云数据库同步（原生 fetch REST，不依赖 supabase-js CDN）==========
+// ========== Supabase 云数据库同步（原生 fetch REST，按需拉取，减少往返）==========
 const SUPABASE_URL = 'https://ksjkrldxinxalghtxyyl.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzamtybGR4aW54YWxnaHR4eXlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNTY1ODcsImV4cCI6MjEwNTYzMjU4N30.6sTtbWLoxrDmW5Mprvy3yG9uSCBnsb2IP-28JnK62qU';
 let db = null;
@@ -833,9 +833,9 @@ function restHeaders(extra) {
 }
 
 async function rest(path, options, timeoutMs) {
-    timeoutMs = timeoutMs || 15000;
+    timeoutMs = timeoutMs || 12000;
     const ctrl = new AbortController();
-    const t = setTimeout(function() { ctrl.abort(); }, timeoutMs);
+    const t = setTimeout(function () { ctrl.abort(); }, timeoutMs);
     try {
         const res = await fetch(SUPABASE_URL + '/rest/v1/' + String(path).replace(/^\//, ''), {
             method: (options && options.method) || 'GET',
@@ -864,17 +864,17 @@ async function rest(path, options, timeoutMs) {
 }
 
 async function probeSupabase(timeoutMs) {
-    await rest('smt_codes?select=id&limit=1', {}, timeoutMs || 8000);
+    await rest('smt_codes?select=id&limit=1', {}, timeoutMs || 10000);
     return true;
 }
 
 async function initSupabase() {
     lastCloudError = '';
     try {
-        await probeSupabase(8000);
+        await probeSupabase(10000);
         dbReady = true;
         db = { __rest: true };
-        console.log('✅ Supabase REST 就绪（无需 supabase-js）');
+        console.log('✅ Supabase REST 就绪');
     } catch (e) {
         lastCloudError = e.message || String(e);
         console.warn('Supabase初始化失败:', e);
@@ -889,7 +889,7 @@ async function syncSmtCodesFromDB() {
         const data = await rest('smt_codes?select=code,uph');
         if (data && data.length > 0) {
             const processedData = {};
-            data.forEach(function(row) {
+            data.forEach(function (row) {
                 const intUph = Math.round(row.uph);
                 if (!processedData[row.code] || intUph > processedData[row.code]) {
                     processedData[row.code] = intUph;
@@ -897,7 +897,6 @@ async function syncSmtCodesFromDB() {
             });
             SMT_CODES = processedData;
             localStorage.setItem('smt_codes', JSON.stringify(SMT_CODES));
-            console.log('从云端同步 ' + Object.keys(SMT_CODES).length + ' 条SMT编码');
             return true;
         }
         return false;
@@ -911,56 +910,71 @@ async function syncSmtCodesToDB() {
     if (!dbReady) return;
     try {
         await rest('smt_codes?id=gt.0', { method: 'DELETE' });
-        const records = Object.entries(SMT_CODES).map(function(entry) {
+        const records = Object.entries(SMT_CODES).map(function (entry) {
             return { code: entry[0], uph: entry[1] };
         });
         for (let i = 0; i < records.length; i += 100) {
-            const batch = records.slice(i, i + 100);
-            await rest('smt_codes', { method: 'POST', body: JSON.stringify(batch) });
+            await rest('smt_codes', { method: 'POST', body: JSON.stringify(records.slice(i, i + 100)) });
         }
-        console.log('已同步 ' + records.length + ' 条SMT编码到云端');
     } catch (e) {
         console.warn('同步SMT编码到云端失败:', e);
     }
 }
 
-async function syncRecordsFromDB() {
-    if (!dbReady) return;
+function cacheRecordToLocal(row, lastLine) {
+    let lineName = (row.line_name || '').trim();
+    if (!lineName) lineName = lastLine || '';
+    if (!lineName) return false;
+    const date = String(row.record_date).slice(0, 10);
+    const key = 'record_' + lineName + '_' + date + '_' + row.hour_slot;
+    let localRest = 0;
     try {
-        const data = await rest('records?select=*');
+        const prev = JSON.parse(localStorage.getItem(key) || 'null');
+        if (prev && prev.rest_minutes) localRest = prev.rest_minutes;
+    } catch (_) {}
+    localStorage.setItem(key, JSON.stringify({
+        line_name: lineName,
+        record_date: date,
+        hour_slot: row.hour_slot,
+        smt_code: row.smt_code,
+        target_value: row.target_value,
+        achieved_value: row.achieved_value,
+        reason_category: row.reason_category || '',
+        reason: row.reason || '',
+        rest_minutes: (row.rest_minutes != null ? row.rest_minutes : localRest) || 0,
+        shift: row.shift || inferShiftFromSlot(row.hour_slot)
+    }));
+    return true;
+}
+
+async function syncRecordsFromDB(opts) {
+    if (!dbReady) return;
+    opts = opts || {};
+    const date = opts.date || document.getElementById('record-date').value || '';
+    const line = opts.line || document.getElementById('line-name').value || '';
+    const lastLine = localStorage.getItem('pt_last_line') || '';
+    try {
+        let q = 'records?select=*';
+        if (date) q += '&record_date=eq.' + encodeURIComponent(date);
+        if (line) q += '&line_name=eq.' + encodeURIComponent(line);
+        q += '&limit=500';
+        const data = await rest(q);
         if (data) {
-            const lastLine = localStorage.getItem('pt_last_line') || '';
-            data.forEach(function(row) {
-                let lineName = (row.line_name || '').trim();
-                if (!lineName) lineName = lastLine || '';
-                if (!lineName) return;
-                const date = String(row.record_date).slice(0, 10);
-                const key = 'record_' + lineName + '_' + date + '_' + row.hour_slot;
-                let localRest = 0;
-                try {
-                    const prev = JSON.parse(localStorage.getItem(key) || 'null');
-                    if (prev && prev.rest_minutes) localRest = prev.rest_minutes;
-                } catch (_) {}
-                const record = {
-                    line_name: lineName,
-                    record_date: date,
-                    hour_slot: row.hour_slot,
-                    smt_code: row.smt_code,
-                    target_value: row.target_value,
-                    achieved_value: row.achieved_value,
-                    reason_category: row.reason_category || '',
-                    reason: row.reason || '',
-                    rest_minutes: (row.rest_minutes != null ? row.rest_minutes : localRest) || 0,
-                    shift: row.shift || inferShiftFromSlot(row.hour_slot)
-                };
-                localStorage.setItem(key, JSON.stringify(record));
-            });
-            console.log('从云端同步 ' + data.length + ' 条记录');
+            data.forEach(function (row) { cacheRecordToLocal(row, lastLine); });
+            console.log('从云端同步 ' + data.length + ' 条');
         }
     } catch (e) {
         console.warn('同步记录失败:', e);
         throw e;
     }
+}
+
+async function syncRecordsForDate(date) {
+    if (!dbReady) return;
+    const lastLine = localStorage.getItem('pt_last_line') || '';
+    const data = await rest('records?select=*&record_date=eq.' + encodeURIComponent(date) + '&limit=500');
+    if (data) data.forEach(function (row) { cacheRecordToLocal(row, lastLine); });
+    return data ? data.length : 0;
 }
 
 function inferShiftFromSlot(slot) {
@@ -990,8 +1004,8 @@ async function uploadRecordToDB(record) {
         const q = 'records?line_name=eq.' + encodeURIComponent(record.line_name) +
             '&record_date=eq.' + encodeURIComponent(record.record_date) +
             '&hour_slot=eq.' + encodeURIComponent(record.hour_slot);
-        await rest(q, { method: 'DELETE' });
-        await rest('records', { method: 'POST', body: JSON.stringify(recordPayload(record)) });
+        await rest(q, { method: 'DELETE' }, 12000);
+        await rest('records', { method: 'POST', body: JSON.stringify(recordPayload(record)) }, 12000);
         showDbStatus('connected');
         return true;
     } catch (e) {
@@ -1005,19 +1019,19 @@ async function uploadRecordsBatch(records) {
     if (!dbReady || !records.length) return { ok: false, skipped: true, count: 0 };
     try {
         const groups = {};
-        records.forEach(function(r) {
+        records.forEach(function (r) {
             const k = r.line_name + '||' + r.record_date;
             if (!groups[k]) groups[k] = { line: r.line_name, date: r.record_date, rows: [] };
             groups[k].rows.push(recordPayload(r));
         });
-        for (const g of Object.values(groups)) {
+        await Promise.all(Object.values(groups).map(async function (g) {
             const delQ = 'records?line_name=eq.' + encodeURIComponent(g.line) +
                 '&record_date=eq.' + encodeURIComponent(g.date);
-            await rest(delQ, { method: 'DELETE' });
+            await rest(delQ, { method: 'DELETE' }, 15000);
             if (g.rows.length) {
-                await rest('records', { method: 'POST', body: JSON.stringify(g.rows) });
+                await rest('records', { method: 'POST', body: JSON.stringify(g.rows) }, 15000);
             }
-        }
+        }));
         showDbStatus('connected');
         return { ok: true, count: records.length };
     } catch (e) {
@@ -1056,14 +1070,67 @@ async function refreshFromCloud() {
     }
 }
 
+function showDbStatus(status, detail) {
+    const el = document.getElementById('db-status');
+    if (!el) return;
+    const btn = function (label) {
+        return ' <button type="button" onclick="reconnectCloud()" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;cursor:pointer;">' + label + '</button>';
+    };
+    if (status === 'connected') {
+        el.innerHTML = '<span style="color:#4ade80;">● 云端同步已连接</span>' + btn('重测');
+    } else if (status === 'syncing') {
+        el.innerHTML = '<span style="color:#fbbf24;">● 正在连接云端...</span>';
+    } else if (status === 'local' && detail) {
+        el.innerHTML = '<span style="color:#fca5a5;">● ' + String(detail).replace(/</g, '&lt;') + '</span>' + btn('重试');
+    } else if (status === 'local') {
+        el.innerHTML = '<span style="color:#9ca3af;">● 本地模式</span>' + btn('连接云端');
+    } else {
+        el.innerHTML = '<span style="color:#fde68a;">● 正在连接云端…</span>';
+    }
+}
+
+async function reconnectCloud() {
+    showDbStatus('syncing');
+    const ok = await initCloudSync();
+    if (!ok && lastCloudError) showDbStatus('local', lastCloudError);
+    return ok;
+}
+
+async function initCloudSync() {
+    showDbStatus('syncing');
+    await initSupabase();
+    if (!dbReady) {
+        showDbStatus('local', lastCloudError || '无法连接云端');
+        return false;
+    }
+    try {
+        const cloudHasData = await syncSmtCodesFromDB();
+        if (!cloudHasData && Object.keys(SMT_CODES).length > 0) {
+            await syncSmtCodesToDB();
+        }
+        await syncRecordsFromDB();
+        showDbStatus('connected');
+        setupRealtimeSync();
+        updateTimeSlots();
+        updateShiftSummary();
+        updateStats();
+        updateFillStatus();
+        return true;
+    } catch (e) {
+        lastCloudError = e.message || String(e);
+        showDbStatus('local', '同步失败: ' + lastCloudError);
+        return false;
+    }
+}
+
 function setupRealtimeSync() {
     if (!dbReady) return;
     if (_pollTimer) clearInterval(_pollTimer);
     let lastLen = -1;
-    _pollTimer = setInterval(async function() {
+    _pollTimer = setInterval(async function () {
         if (!dbReady) return;
         try {
-            const data = await rest('records?select=id');
+            const data = await rest('records?select=id&limit=1', {}, 8000);
             const n = Array.isArray(data) ? data.length : 0;
             if (lastLen >= 0 && n !== lastLen) {
                 await syncRecordsFromDB();
@@ -1074,9 +1141,10 @@ function setupRealtimeSync() {
             }
             lastLen = n;
         } catch (e) {}
-    }, 20000);
-    console.log('✅ 云端轮询同步已开启（20s）');
+    }, 45000);
+    console.log('✅ 云端轮询同步已开启（45s）');
 }
+
 // ========== 以下为原有数据 ==========
 
 // 内置SMT编码数据（770条）
@@ -2419,7 +2487,7 @@ function loadDashboard() {
     // 先尝试拉取云端，再渲染本地镜像
     if (dbReady) {
         showDbStatus('syncing');
-        syncRecordsFromDB().finally(() => {
+        syncRecordsForDate(date).catch(function(){return 0;}).finally(() => {
             showDbStatus('connected');
             renderDashboardUI(date, shift, lineFilter);
         });
