@@ -5,7 +5,7 @@
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>电子车间产线小时产出录入系统</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- supabase-js CDN 可选：核心已改为原生 REST -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
@@ -814,77 +814,82 @@ a { color: var(--brand); }
 
 <script>
 
-// ========== Supabase 云数据库同步 ==========
+// ========== Supabase 云数据库同步（原生 fetch REST，不依赖 supabase-js CDN）==========
 const SUPABASE_URL = 'https://ksjkrldxinxalghtxyyl.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzamtybGR4aW54YWxnaHR4eXlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNTY1ODcsImV4cCI6MjEwNTYzMjU4N30.6sTtbWLoxrDmW5Mprvy3yG9uSCBnsb2IP-28JnK62qU';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtzamtybGR4aW54YWxnaHR4eXlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTAwNTY1ODcsImV4cCI6MjEwNTYzMjU4N30.6sTtbWLoxrDmW5Mprvy3yG9uSCBnsb2IP-28JnK62qU';
 let db = null;
 let dbReady = false;
 let lastCloudError = '';
+let _pollTimer = null;
 
-async function probeSupabase(timeoutMs = 8000) {
+function restHeaders(extra) {
+    const h = {
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
+        Accept: 'application/json'
+    };
+    if (extra) Object.assign(h, extra);
+    return h;
+}
+
+async function rest(path, options, timeoutMs) {
+    timeoutMs = timeoutMs || 15000;
     const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    const t = setTimeout(function() { ctrl.abort(); }, timeoutMs);
     try {
-        const res = await fetch(SUPABASE_URL + '/rest/v1/smt_codes?select=id&limit=1', {
-            headers: {
-                apikey: SUPABASE_ANON_KEY,
-                Authorization: 'Bearer ' + SUPABASE_ANON_KEY,
-                Accept: 'application/json'
-            },
+        const res = await fetch(SUPABASE_URL + '/rest/v1/' + String(path).replace(/^\//, ''), {
+            method: (options && options.method) || 'GET',
+            body: options && options.body,
+            headers: restHeaders(options && options.body ? { 'Content-Type': 'application/json' } : (options && options.headers)),
             signal: ctrl.signal
         });
         clearTimeout(t);
         if (!res.ok) {
-            const body = await res.text();
-            throw new Error('HTTP ' + res.status + ' ' + body.slice(0, 160));
+            let body = '';
+            try { body = await res.text(); } catch (_) {}
+            throw new Error('HTTP ' + res.status + ' ' + body.slice(0, 200));
         }
-        return true;
+        if (res.status === 204) return null;
+        const text = await res.text();
+        if (!text) return null;
+        try { return JSON.parse(text); } catch (_) { return text; }
     } catch (e) {
         clearTimeout(t);
-        if (e.name === 'AbortError') throw new Error('连接超时（' + (timeoutMs / 1000) + 's）— 手机网络可能访问不了 supabase.co');
+        if (e.name === 'AbortError') throw new Error('云端请求超时');
         if (e instanceof TypeError || /Failed to fetch|NetworkError|Load failed/i.test(e.message || '')) {
-            throw new Error('网络无法访问 supabase.co（运营商拦截/未开代理/GitHub页与云端不通）');
+            throw new Error('无法访问 supabase.co（网络/运营商/代理）');
         }
         throw e;
     }
 }
 
+async function probeSupabase(timeoutMs) {
+    await rest('smt_codes?select=id&limit=1', {}, timeoutMs || 8000);
+    return true;
+}
+
 async function initSupabase() {
     lastCloudError = '';
     try {
-        // 先用原生 fetch 探测，错误信息更清晰
         await probeSupabase(8000);
-        if (!db && window.supabase && window.supabase.createClient) {
-            db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-        }
-        dbReady = !!db;
-        if (dbReady) {
-            console.log('✅ Supabase连接成功');
-        } else {
-            lastCloudError = 'supabase-js 未加载（CDN失败）';
-            dbReady = false;
-        }
+        dbReady = true;
+        db = { __rest: true };
+        console.log('✅ Supabase REST 就绪（无需 supabase-js）');
     } catch (e) {
         lastCloudError = e.message || String(e);
         console.warn('Supabase初始化失败:', e);
         dbReady = false;
-        // 再试一次 CDN client（即使探测失败也可重试）
-        try {
-            if (window.supabase && window.supabase.createClient && !db) {
-                db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-            }
-        } catch (_) {}
+        db = null;
     }
 }
 
 async function syncSmtCodesFromDB() {
     if (!dbReady) return false;
     try {
-        const { data, error } = await db.from('smt_codes').select('code, uph');
-        if (error) throw error;
+        const data = await rest('smt_codes?select=code,uph');
         if (data && data.length > 0) {
             const processedData = {};
-            data.forEach(row => {
+            data.forEach(function(row) {
                 const intUph = Math.round(row.uph);
                 if (!processedData[row.code] || intUph > processedData[row.code]) {
                     processedData[row.code] = intUph;
@@ -905,14 +910,13 @@ async function syncSmtCodesFromDB() {
 async function syncSmtCodesToDB() {
     if (!dbReady) return;
     try {
-        await db.from('smt_codes').delete().neq('id', 0);
-        const records = Object.entries(SMT_CODES).map(([code, uph]) => ({
-            code: code, uph: uph
-        }));
+        await rest('smt_codes?id=gt.0', { method: 'DELETE' });
+        const records = Object.entries(SMT_CODES).map(function(entry) {
+            return { code: entry[0], uph: entry[1] };
+        });
         for (let i = 0; i < records.length; i += 100) {
             const batch = records.slice(i, i + 100);
-            const { error } = await db.from('smt_codes').insert(batch);
-            if (error) throw error;
+            await rest('smt_codes', { method: 'POST', body: JSON.stringify(batch) });
         }
         console.log('已同步 ' + records.length + ' 条SMT编码到云端');
     } catch (e) {
@@ -923,12 +927,10 @@ async function syncSmtCodesToDB() {
 async function syncRecordsFromDB() {
     if (!dbReady) return;
     try {
-        const { data, error } = await db.from('records').select('*');
-        if (error) throw error;
+        const data = await rest('records?select=*');
         if (data) {
             const lastLine = localStorage.getItem('pt_last_line') || '';
-            data.forEach(row => {
-                // 兼容历史脏数据：line_name 为空时用上次线体
+            data.forEach(function(row) {
                 let lineName = (row.line_name || '').trim();
                 if (!lineName) lineName = lastLine || '';
                 if (!lineName) return;
@@ -969,7 +971,6 @@ function inferShiftFromSlot(slot) {
 }
 
 function recordPayload(record) {
-    // 云端 records 表当前无 rest_minutes 列，rest 仅存本地；有列后可去掉这行过滤
     return {
         line_name: record.line_name,
         record_date: record.record_date,
@@ -986,15 +987,11 @@ function recordPayload(record) {
 async function uploadRecordToDB(record) {
     if (!dbReady) return false;
     try {
-        // 表无唯一约束时 upsert(onConflict) 会报错：先删再插
-        const { error: delErr } = await db.from('records')
-            .delete()
-            .eq('line_name', record.line_name)
-            .eq('record_date', record.record_date)
-            .eq('hour_slot', record.hour_slot);
-        if (delErr) throw delErr;
-        const { error } = await db.from('records').insert(recordPayload(record));
-        if (error) throw error;
+        const q = 'records?line_name=eq.' + encodeURIComponent(record.line_name) +
+            '&record_date=eq.' + encodeURIComponent(record.record_date) +
+            '&hour_slot=eq.' + encodeURIComponent(record.hour_slot);
+        await rest(q, { method: 'DELETE' });
+        await rest('records', { method: 'POST', body: JSON.stringify(recordPayload(record)) });
         showDbStatus('connected');
         return true;
     } catch (e) {
@@ -1007,22 +1004,18 @@ async function uploadRecordToDB(record) {
 async function uploadRecordsBatch(records) {
     if (!dbReady || !records.length) return { ok: false, skipped: true, count: 0 };
     try {
-        // 按「线体+日期」整组覆盖，避免依赖 ON CONFLICT 唯一约束
         const groups = {};
-        records.forEach(r => {
+        records.forEach(function(r) {
             const k = r.line_name + '||' + r.record_date;
             if (!groups[k]) groups[k] = { line: r.line_name, date: r.record_date, rows: [] };
             groups[k].rows.push(recordPayload(r));
         });
         for (const g of Object.values(groups)) {
-            const { error: delErr } = await db.from('records')
-                .delete()
-                .eq('line_name', g.line)
-                .eq('record_date', g.date);
-            if (delErr) throw delErr;
+            const delQ = 'records?line_name=eq.' + encodeURIComponent(g.line) +
+                '&record_date=eq.' + encodeURIComponent(g.date);
+            await rest(delQ, { method: 'DELETE' });
             if (g.rows.length) {
-                const { error: insErr } = await db.from('records').insert(g.rows);
-                if (insErr) throw insErr;
+                await rest('records', { method: 'POST', body: JSON.stringify(g.rows) });
             }
         }
         showDbStatus('connected');
@@ -1039,8 +1032,8 @@ async function refreshFromCloud() {
         showDbStatus('syncing');
         await initSupabase();
         if (!dbReady) {
-            showDbStatus('local', '无法连接 Supabase');
-            alert('云端未连接，请检查网络或 Supabase 配置');
+            showDbStatus('local', lastCloudError || '无法连接 Supabase');
+            alert('云端未连接: ' + (lastCloudError || '请检查网络'));
             return false;
         }
     }
@@ -1065,110 +1058,25 @@ async function refreshFromCloud() {
 
 function setupRealtimeSync() {
     if (!dbReady) return;
-    try {
-        db.channel('records-changes')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'records' }, (payload) => {
-                console.log('云端数据变更:', payload.eventType);
-                const row = payload.new || payload.old;
-                if (row) {
-                    const key = 'record_' + row.line_name + '_' + row.record_date + '_' + row.hour_slot;
-                    if (payload.eventType === 'DELETE') {
-                        localStorage.removeItem(key);
-                    } else {
-                        const record = {
-                            line_name: row.line_name,
-                            record_date: row.record_date,
-                            hour_slot: row.hour_slot,
-                            smt_code: row.smt_code,
-                            target_value: row.target_value,
-                            achieved_value: row.achieved_value,
-                            reason_category: row.reason_category || '',
-                            reason: row.reason || '',
-                            rest_minutes: row.rest_minutes || 0,
-                            shift: row.shift || '白班'
-                        };
-                        localStorage.setItem(key, JSON.stringify(record));
-                    }
-                    // 自动刷新看板
-                    if (!document.getElementById('dashboard-page').classList.contains('hidden')) {
-                        loadDashboard();
-                    }
-                    // 自动刷新录入页面
-                    updateTimeSlots();
-                    updateShiftSummary();
-                    updateFillStatus();
-                }
-            })
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'smt_codes' }, (payload) => {
-                console.log('SMT编码变更:', payload.eventType);
-                syncSmtCodesFromDB().then(() => {
-                    updateStats();
-                    if (!document.getElementById('admin-page').classList.contains('hidden')) {
-                        renderTable();
-                    }
-                });
-            })
-            .subscribe();
-        console.log('✅ 实时同步已开启');
-    } catch (e) {
-        console.warn('实时同步设置失败:', e);
-    }
-}
-
-function showDbStatus(status, detail) {
-    const el = document.getElementById('db-status');
-    if (!el) return;
-    if (status === 'connected') {
-        el.innerHTML = '<span style="color:#4ade80;">● 云端同步已连接</span> <button type="button" onclick="reconnectCloud()" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;cursor:pointer;">重测</button>';
-    } else if (status === 'syncing') {
-        el.innerHTML = '<span style="color:#fbbf24;">● 正在连接云端...</span>';
-    } else if (status === 'local' && detail) {
-        el.innerHTML = '<span style="color:#fca5a5;">● ' + String(detail).replace(/</g, '&lt;') + '</span> <button type="button" onclick="reconnectCloud()" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;cursor:pointer;">重试</button>';
-    } else if (status === 'local') {
-        el.innerHTML = '<span style="color:#9ca3af;">● 本地模式</span> <button type="button" onclick="reconnectCloud()" style="margin-left:8px;background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.35);color:#fff;border-radius:999px;padding:2px 8px;font-size:11px;cursor:pointer;">连接云端</button>';
-    } else {
-        el.innerHTML = '<span style="color:#fde68a;">● 正在连接云端…</span>';
-    }
-}
-
-async function reconnectCloud() {
-    showDbStatus('syncing');
-    const ok = await initCloudSync();
-    if (!ok && lastCloudError) {
-        showDbStatus('local', lastCloudError);
-    }
-    return ok;
-}
-
-async function initCloudSync() {
-    showDbStatus('syncing');
-    await initSupabase();
-    if (dbReady) {
+    if (_pollTimer) clearInterval(_pollTimer);
+    let lastLen = -1;
+    _pollTimer = setInterval(async function() {
+        if (!dbReady) return;
         try {
-            const cloudHasData = await syncSmtCodesFromDB();
-            if (!cloudHasData && Object.keys(SMT_CODES).length > 0) {
-                await syncSmtCodesToDB();
+            const data = await rest('records?select=id');
+            const n = Array.isArray(data) ? data.length : 0;
+            if (lastLen >= 0 && n !== lastLen) {
+                await syncRecordsFromDB();
+                if (!document.getElementById('dashboard-page').classList.contains('hidden')) loadDashboard();
+                updateTimeSlots();
+                updateShiftSummary();
+                updateFillStatus();
             }
-            await syncRecordsFromDB();
-            showDbStatus('connected');
-            setupRealtimeSync();
-            // 刷新UI
-            updateTimeSlots();
-            updateShiftSummary();
-            updateStats();
-            updateFillStatus();
-            return true;
-        } catch (e) {
-            lastCloudError = e.message || String(e);
-            showDbStatus('local', '同步失败: ' + lastCloudError);
-            return false;
-        }
-    } else {
-        showDbStatus('local', lastCloudError || '无法连接云端');
-        return false;
-    }
+            lastLen = n;
+        } catch (e) {}
+    }, 20000);
+    console.log('✅ 云端轮询同步已开启（20s）');
 }
-
 // ========== 以下为原有数据 ==========
 
 // 内置SMT编码数据（770条）
@@ -1606,11 +1514,7 @@ function clearSavedRecord(btn) {
     localStorage.removeItem(key);
     // 云端同步删除
     if (dbReady && db) {
-        db.from('records').delete()
-            .eq('line_name', line)
-            .eq('record_date', date)
-            .eq('hour_slot', slot)
-            .then(() => { /* ignore */ });
+        rest('records?line_name=eq.'+encodeURIComponent(line)+'&record_date=eq.'+encodeURIComponent(date)+'&hour_slot=eq.'+encodeURIComponent(slot), { method: 'DELETE' }).catch(function(){});
     }
     updateTimeSlots();
 }
