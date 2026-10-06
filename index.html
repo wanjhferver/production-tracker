@@ -402,6 +402,19 @@ tfoot td {
 .hidden { display: none !important; }
 a { color: var(--brand); }
 
+/* Line group header (全部线体模式) */
+.line-group-header {
+  background: linear-gradient(135deg, #1e40af, #2563eb);
+  color: #fff;
+  font-weight: 800;
+  font-size: 15px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  margin: 14px 0 10px;
+  letter-spacing: 0.02em;
+}
+.line-group-header:first-child { margin-top: 0; }
+
 /* Sub slots */
 .sub-slot-row {
   margin-left: 12px;
@@ -506,6 +519,7 @@ a { color: var(--brand); }
                     <label>线体</label>
                     <select id="line-name" onchange="onFormMetaChange()">
                         <option value="">请选择线体</option>
+                        <option value="__ALL__">全部线体</option>
                         <option value="SMT1线">SMT1线</option>
                         <option value="SMT2线">SMT2线</option>
                         <option value="SMT3线">SMT3线</option>
@@ -513,6 +527,12 @@ a { color: var(--brand); }
                         <option value="SMT5线">SMT5线</option>
                         <option value="SMT6线">SMT6线</option>
                         <option value="SMT7线">SMT7线</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>时段</label>
+                    <select id="time-slot-filter" onchange="onSlotFilterChange()">
+                        <option value="">全部时段</option>
                     </select>
                 </div>
                 <div class="form-group" style="flex:none;display:flex;align-items:flex-end;padding-bottom:8px;gap:6px;flex-wrap:wrap;">
@@ -959,8 +979,8 @@ async function syncRecordsFromDB(opts) {
     try {
         let q = 'records?select=*';
         if (date) q += '&record_date=eq.' + encodeURIComponent(date);
-        if (line) q += '&line_name=eq.' + encodeURIComponent(line);
-        q += '&limit=500';
+        if (line && line !== ALL_LINES_VALUE) q += '&line_name=eq.' + encodeURIComponent(line);
+        q += '&limit=2000';
         const data = await rest(q);
         if (data) {
             data.forEach(function (row) { cacheRecordToLocal(row, lastLine); });
@@ -1185,6 +1205,50 @@ const NIGHT_SLOTS = [
     '4:00-5:00', '5:00-6:00', '6:00-7:00', '7:00-8:00'
 ];
 
+// 线体清单与“全部线体”标记
+const LINES = ['SMT1线', 'SMT2线', 'SMT3线', 'SMT4线', 'SMT5线', 'SMT6线', 'SMT7线'];
+const ALL_LINES_VALUE = '__ALL__';
+
+function getSlotsForShift(shift) {
+    return shift === '夜班' ? NIGHT_SLOTS : DAY_SLOTS;
+}
+
+function getSelectedSlotFilter() {
+    const el = document.getElementById('time-slot-filter');
+    return el ? (el.value || '') : '';
+}
+
+function getTargetLines() {
+    const line = document.getElementById('line-name').value;
+    if (line === ALL_LINES_VALUE) return [...LINES];
+    if (line) return [line];
+    return [];
+}
+
+function getVisibleSlots() {
+    const shift = document.getElementById('shift').value;
+    const base = getSlotsForShift(shift);
+    const f = getSelectedSlotFilter();
+    if (f && base.includes(f)) return [f];
+    return base;
+}
+
+function rebuildSlotFilterOptions(keepSelection) {
+    const el = document.getElementById('time-slot-filter');
+    if (!el) return;
+    const prev = keepSelection ? el.value : '';
+    const base = getSlotsForShift(document.getElementById('shift').value);
+    el.innerHTML = '<option value="">全部时段</option>' +
+        base.map(s => `<option value="${s}">${s}</option>`).join('');
+    el.value = (prev && base.includes(prev)) ? prev : '';
+}
+
+function onSlotFilterChange() {
+    persistFormMeta();
+    updateTimeSlots();
+    updateFillStatus();
+}
+
 // 管理后台分页
 let currentPage = 1;
 const pageSize = 20;
@@ -1254,6 +1318,7 @@ function persistFormMeta() {
             date: document.getElementById('record-date').value,
             shift: document.getElementById('shift').value,
             line: document.getElementById('line-name').value,
+            slot: getSelectedSlotFilter(),
             scrollY: window.scrollY || 0
         }));
         const line = document.getElementById('line-name').value;
@@ -1292,15 +1357,23 @@ function restoreFormMeta() {
         // 默认：今天 + 上次线体/班次
         document.getElementById('record-date').value = todayStr;
         if (lastLine) document.getElementById('line-name').value = lastLine;
+        rebuildSlotFilterOptions(false);
 
         if (raw) {
             const meta = JSON.parse(raw);
             // 日期：优先上次；若上次不是今天且无特殊需要，仍用上次（可回看）
             if (meta.date) document.getElementById('record-date').value = meta.date;
             if (meta.shift) document.getElementById('shift').value = meta.shift;
+            rebuildSlotFilterOptions(false);
             if (meta.line) {
                 document.getElementById('line-name').value = meta.line;
                 localStorage.setItem('pt_last_line', meta.line);
+            }
+            if (meta.slot) {
+                const sel = document.getElementById('time-slot-filter');
+                if (sel && getSlotsForShift(document.getElementById('shift').value).includes(meta.slot)) {
+                    sel.value = meta.slot;
+                }
             }
             if (meta.scrollY != null) {
                 localStorage.setItem('pt_scroll_y', String(meta.scrollY));
@@ -1313,6 +1386,7 @@ function restoreFormMeta() {
 }
 
 function onFormMetaChange() {
+    rebuildSlotFilterOptions(true);
     persistFormMeta();
     updateTimeSlots();
     updateFillStatus();
@@ -1322,17 +1396,20 @@ function onFormMetaChange() {
 
 function countLocalRecords(line, date) {
     if (!line || !date) return { filled: 0, total: 0, slots: [] };
-    const slots = (document.getElementById('shift').value === '夜班') ? NIGHT_SLOTS : DAY_SLOTS;
+    const slots = getVisibleSlots();
+    const lines = line === ALL_LINES_VALUE ? LINES : [line];
     let filled = 0;
     const filledSlots = [];
-    slots.forEach(slot => {
-        const key = `record_${line}_${date}_${slot}`;
-        if (localStorage.getItem(key)) {
-            filled++;
-            filledSlots.push(slot);
-        }
+    lines.forEach(ln => {
+        slots.forEach(slot => {
+            const key = `record_${ln}_${date}_${slot}`;
+            if (localStorage.getItem(key)) {
+                filled++;
+                filledSlots.push(lines.length > 1 ? `${ln} ${slot}` : slot);
+            }
+        });
     });
-    return { filled, total: slots.length, slots: filledSlots };
+    return { filled, total: lines.length * slots.length, slots: filledSlots };
 }
 
 function updateFillStatus() {
@@ -1354,7 +1431,10 @@ function updateFillStatus() {
     el.style.background = bg;
     el.style.borderColor = border;
     el.style.color = color;
-    el.innerHTML = `📋 当前填写进度：已填 <b>${filled}/${total}</b> 时段（${pct}%）` +
+    const lineText = line === ALL_LINES_VALUE ? '全部线体' : line;
+    const slotFilter = getSelectedSlotFilter();
+    const scopeText = `（${lineText} · ${slotFilter || '全部时段'}）`;
+    el.innerHTML = `📋 当前填写进度${scopeText}：已填 <b>${filled}/${total}</b> 时段（${pct}%）` +
         (filled > 0 ? `　<span style="font-weight:500;opacity:.85">${slots.join('、')}</span>` : '　尚未保存任何时段') +
         `<div style="margin-top:6px;height:6px;background:#e5e7eb;border-radius:99px;overflow:hidden;">
             <div style="height:100%;width:${pct}%;background:${color};border-radius:99px;transition:width .3s;"></div>
@@ -1445,6 +1525,14 @@ function checkAdminPassword() {
 }
 
 // 更新时段列表 - 基本信息填写完毕后自动弹出
+function addLineGroupHeader(lineName) {
+    const h = document.createElement('div');
+    h.className = 'line-group-header';
+    h.textContent = lineName;
+    h.dataset.lineHeader = lineName;
+    document.getElementById('input-rows').appendChild(h);
+}
+
 function updateTimeSlots() {
     const date = document.getElementById('record-date').value;
     const shift = document.getElementById('shift').value;
@@ -1458,24 +1546,28 @@ function updateTimeSlots() {
         // 清空现有录入行
         document.getElementById('input-rows').innerHTML = '';
 
-        // 根据班次生成时段列表
-        const slots = shift === '白班' ? DAY_SLOTS : NIGHT_SLOTS;
+        // 根据班次 + 时段筛选生成时段列表
+        const slots = getVisibleSlots();
+        const targetLines = line === ALL_LINES_VALUE ? LINES : [line];
 
         // 自动添加所有时段，检查是否已录入
-        slots.forEach(slot => {
-            const key = `record_${line}_${date}_${slot}`;
-            let existingRecord = null;
-            try {
-                existingRecord = JSON.parse(localStorage.getItem(key) || 'null');
-            } catch (_) {}
+        targetLines.forEach(ln => {
+            if (line === ALL_LINES_VALUE) addLineGroupHeader(ln);
+            slots.forEach(slot => {
+                const key = `record_${ln}_${date}_${slot}`;
+                let existingRecord = null;
+                try {
+                    existingRecord = JSON.parse(localStorage.getItem(key) || 'null');
+                } catch (_) {}
 
-            if (existingRecord && existingRecord.smt_code) {
-                // 已录入，显示折叠状态
-                addSavedRow(slot, existingRecord, shift);
-            } else {
-                // 未录入，显示空行
-                addInputRow(slot);
-            }
+                if (existingRecord && existingRecord.smt_code) {
+                    // 已录入，显示折叠状态
+                    addSavedRow(slot, existingRecord, shift, ln);
+                } else {
+                    // 未录入，显示空行
+                    addInputRow(slot, false, null, ln);
+                }
+            });
         });
 
         // 更新当班累计统计
@@ -1505,7 +1597,7 @@ function updateTimeSlots() {
 }
 
 // 添加已保存的折叠行
-function addSavedRow(slot, record, shift) {
+function addSavedRow(slot, record, shift, lineName) {
     const row = document.createElement('div');
     row.className = 'input-row saved-row';
     const achievedColor = record.achieved_value >= record.target_value ? '#16a34a' : '#dc2626';
@@ -1515,6 +1607,7 @@ function addSavedRow(slot, record, shift) {
     row.dataset.recordData = JSON.stringify(record);
     row.dataset.expanded = 'false';
     row.dataset.slot = slot;
+    row.dataset.line = lineName || record.line_name || document.getElementById('line-name').value;
 
     row.innerHTML = `
         <div class="time-slot-header saved-header" onclick="toggleSavedRow(this)" style="background:#f0fdf4;padding:10px 14px;border-radius:8px;font-weight:600;color:#166534;font-size:15px;cursor:pointer;display:flex;justify-content:space-between;align-items:center;">
@@ -1575,7 +1668,13 @@ function clearSavedRecord(btn) {
     if (!row) return;
     if (!confirm('确定清除该时段已保存数据？')) return;
     const date = document.getElementById('record-date').value;
-    const line = document.getElementById('line-name').value;
+    let line = row.dataset.line || '';
+    if (!line && row.dataset.recordData) {
+        try { line = JSON.parse(row.dataset.recordData).line_name || ''; } catch (_) {}
+    }
+    if (!line && document.getElementById('line-name').value !== ALL_LINES_VALUE) {
+        line = document.getElementById('line-name').value;
+    }
     let slot = row.querySelector('.hour-slot')?.value;
     if (!slot && row.dataset.recordData) {
         try { slot = JSON.parse(row.dataset.recordData).hour_slot; } catch (_) {}
@@ -1620,11 +1719,11 @@ function showSplitDialog(btn) {
         return;
     }
     
-    confirmSplit(slot, minutes);
+    confirmSplit(slot, minutes, row.dataset.line || '');
 }
 
 // 确认分解
-function confirmSplit(slot, splitMinutes) {
+function confirmSplit(slot, splitMinutes, lineName) {
     const [startStr, endStr] = slot.split('-');
     const [startH, startM] = startStr.split(':').map(Number);
     
@@ -1636,11 +1735,12 @@ function confirmSplit(slot, splitMinutes) {
     const slot1 = `${startStr}-${String(splitH).padStart(2, '0')}:${String(splitM).padStart(2, '0')}`;
     const slot2 = `${String(splitH).padStart(2, '0')}:${String(splitM).padStart(2, '0')}-${endStr}`;
     
-    // 找到当前行（通过slot匹配）
+    // 找到当前行（通过slot+线体匹配，兼容全部线体模式）
     const rows = document.querySelectorAll('.input-row');
     let currentRow = null;
     rows.forEach((row) => {
-        if (row.dataset.slot === slot && row.dataset.isSubSlot !== 'true') {
+        const lineMatch = !lineName || (row.dataset.line || '') === lineName || !row.dataset.line;
+        if (row.dataset.slot === slot && row.dataset.isSubSlot !== 'true' && lineMatch) {
             currentRow = row;
         }
     });
@@ -1648,9 +1748,10 @@ function confirmSplit(slot, splitMinutes) {
     if (!currentRow) return;
     
     const parentSlot = currentRow.dataset.slot;
+    const parentLine = currentRow.dataset.line || lineName || '';
     
-    // 检查是否已经有子时段（避免重复拆分）
-    const existingSubRows = Array.from(rows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true');
+    // 检查是否已经有子时段（避免重复拆分，同线同父时段）
+    const existingSubRows = Array.from(rows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
     if (existingSubRows.length > 0) {
         alert('该时段已经拆分过了');
         return;
@@ -1687,8 +1788,8 @@ function confirmSplit(slot, splitMinutes) {
     }
 
     // 创建两个新的子时段行（样式更小）
-    const newRow1 = createSubSlotRow(slot1, parentSlot);
-    const newRow2 = createSubSlotRow(slot2, parentSlot);
+    const newRow1 = createSubSlotRow(slot1, parentSlot, parentLine);
+    const newRow2 = createSubSlotRow(slot2, parentSlot, parentLine);
 
     // 第一个子时段继承原数据
     if (currentData.smtCode) newRow1.querySelector('.smt-code-input').value = currentData.smtCode;
@@ -1719,12 +1820,13 @@ function confirmSplit(slot, splitMinutes) {
 }
 
 // 创建子时段行（样式更小，缩进显示）
-function createSubSlotRow(slotStr, parentSlot) {
+function createSubSlotRow(slotStr, parentSlot, lineName) {
     const row = document.createElement('div');
     row.className = 'input-row sub-slot-row';
     row.dataset.slot = slotStr;
     row.dataset.parentSlot = parentSlot;
     row.dataset.isSubSlot = 'true';
+    row.dataset.line = lineName || '';
     
     row.innerHTML = `
         <div class="time-slot-header" style="background:#e0f2fe;padding:8px 12px;border-radius:6px;font-weight:500;color:#0369a1;font-size:13px;border-bottom:1px solid #7dd3fc;margin-left:20px;">
@@ -1774,8 +1876,9 @@ function createSubSlotRow(slotStr, parentSlot) {
 function toggleSubSlots(btn) {
     const row = btn.closest('.input-row');
     const parentSlot = row.dataset.slot;
+    const parentLine = row.dataset.line || '';
     const allRows = document.querySelectorAll('.input-row');
-    const subRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true');
+    const subRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
     
     const isHidden = subRows[0]?.style.display === 'none';
     
@@ -1790,8 +1893,9 @@ function toggleSubSlots(btn) {
 function mergeSubSlots(btn) {
     const row = btn.closest('.input-row');
     const parentSlot = row.dataset.slot;
+    const parentLine = row.dataset.line || '';
     const allRows = document.querySelectorAll('.input-row');
-    const subRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true');
+    const subRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
     
     if (subRows.length === 0) return;
     
@@ -1824,10 +1928,11 @@ function mergeSubSlots(btn) {
 function deleteSubSlot(btn) {
     const row = btn.closest('.input-row');
     const parentSlot = row.dataset.parentSlot;
+    const parentLine = row.dataset.line || '';
     
-    // 找到所有同父时段的子时段
+    // 找到所有同父时段同线的子时段
     const allRows = document.querySelectorAll('.input-row');
-    const subRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true');
+    const subRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
     
     if (subRows.length === 0) return;
     
@@ -1835,11 +1940,11 @@ function deleteSubSlot(btn) {
     row.remove();
     
     // 检查是否还有剩余的子时段
-    const remainingSubRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && r !== row);
+    const remainingSubRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine && r !== row);
     
     // 如果没有剩余子时段了，自动合并还原原时段
     if (remainingSubRows.length === 0) {
-        const parentRow = Array.from(allRows).find(r => r.dataset.slot === parentSlot && r.dataset.isParent === 'true');
+        const parentRow = Array.from(allRows).find(r => r.dataset.slot === parentSlot && r.dataset.isParent === 'true' && (r.dataset.line || '') === parentLine);
         if (parentRow) {
             // 恢复原时段行样式
             parentRow.dataset.isParent = 'false';
@@ -1864,18 +1969,19 @@ function deleteSubSlot(btn) {
 }
 
 // 添加录入行
-function addInputRow(presetSlot = '', isSubSlot = false, parentSlot = null) {
-    const row = createInputRow(presetSlot, isSubSlot, parentSlot);
+function addInputRow(presetSlot = '', isSubSlot = false, parentSlot = null, lineName = '') {
+    const row = createInputRow(presetSlot, isSubSlot, parentSlot, lineName);
     document.getElementById('input-rows').appendChild(row);
 }
 
 // 创建录入行（返回行元素，不直接添加到DOM）
-function createInputRow(presetSlot = '', isSubSlot = false, parentSlot = null) {
+function createInputRow(presetSlot = '', isSubSlot = false, parentSlot = null, lineName = '') {
     const row = document.createElement('div');
     row.className = 'input-row';
     row.dataset.slot = presetSlot;
     row.dataset.parentSlot = parentSlot || presetSlot;
     row.dataset.isSubSlot = isSubSlot;
+    row.dataset.line = lineName || document.getElementById('line-name').value;
     
     row.innerHTML = `
         <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
@@ -2064,7 +2170,7 @@ function checkExclusion(row) {
     }
 }
 
-// 更新当班累计统计
+// 更新当班累计统计（按当前线体/时段筛选范围统计）
 function updateShiftSummary() {
     const date = document.getElementById('record-date').value;
     const shift = document.getElementById('shift').value;
@@ -2080,19 +2186,23 @@ function updateShiftSummary() {
     let totalTarget = 0;
     let totalAchieved = 0;
     
-    // 根据班次获取时段列表
-    const slots = shift === '白班' ? DAY_SLOTS : NIGHT_SLOTS;
+    // 按当前筛选范围统计
+    const slots = getVisibleSlots();
+    const targetLines = lineName === ALL_LINES_VALUE ? LINES : [lineName];
     
-    // 从 localStorage 读取当前班次的所有记录
-    slots.forEach(slot => {
-        const key = `record_${lineName}_${date}_${slot}`;
-        const record = JSON.parse(localStorage.getItem(key) || 'null');
-        
-        if (record) {
-            // 使用保存时的 target_value（UPH）
-            totalTarget += record.target_value || 0;
-            totalAchieved += record.achieved_value || 0;
-        }
+    // 从 localStorage 读取筛选范围内的所有记录
+    targetLines.forEach(ln => {
+        slots.forEach(slot => {
+            const key = `record_${ln}_${date}_${slot}`;
+            let record = null;
+            try { record = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
+            
+            if (record) {
+                // 使用保存时的 target_value（UPH）
+                totalTarget += record.target_value || 0;
+                totalAchieved += record.achieved_value || 0;
+            }
+        });
     });
     
     const rate = totalTarget > 0 ? ((totalAchieved / totalTarget) * 100).toFixed(1) : 0;
@@ -2113,10 +2223,14 @@ function saveAllRecords() {
 async function saveAllRecordsAsync() {
     const defaultDate = document.getElementById('record-date').value;
     const shift = document.getElementById('shift').value;
-    const lineName = document.getElementById('line-name').value;
+    const selectedLine = document.getElementById('line-name').value;
 
     if (!defaultDate) {
         alert('请选择日期');
+        return;
+    }
+    if (!selectedLine) {
+        alert('请选择线体');
         return;
     }
 
@@ -2153,6 +2267,12 @@ async function saveAllRecordsAsync() {
         // 时段分解后的父行已清空，跳过
         if (row.dataset.isParent === 'true') continue;
 
+        // 行级线体（兼容全部线体模式），子时段行同样携带 dataset.line
+        let rowLine = row.dataset.line || '';
+        if (!rowLine && row.classList.contains('saved-row')) {
+            try { rowLine = (JSON.parse(row.dataset.recordData || '{}').line_name) || ''; } catch (_) {}
+        }
+        if (!rowLine && selectedLine !== ALL_LINES_VALUE) rowLine = selectedLine;
         // 获取时段信息：新行从hour-slot获取，已保存行从recordData获取
         let hourSlot = row.querySelector('.hour-slot')?.value;
         if (!hourSlot && row.classList.contains('saved-row')) {
@@ -2167,35 +2287,35 @@ async function saveAllRecordsAsync() {
         const reason = row.querySelector('.reason')?.value.trim();
         const restMinutes = parseInt(row.querySelector('.rest-minutes')?.value) || 0;
 
-        if (!hourSlot || !smtCode) {
+        if (!hourSlot || !smtCode || !rowLine) {
             continue;
         }
 
         // 验证：如果达成量未达到UPH值，必须填写异常类别和未达标原因
         if (achievedValue < targetValue) {
             if (!reasonCategory) {
-                alert(`时段 ${hourSlot} 达成量(${achievedValue})未达到目标值(${targetValue})，请选择异常类别`);
+                alert(`${rowLine} 时段 ${hourSlot} 达成量(${achievedValue})未达到目标值(${targetValue})，请选择异常类别`);
                 row.querySelector('.reason-category')?.focus();
                 return;
             }
             if (!reason) {
-                alert(`时段 ${hourSlot} 达成量(${achievedValue})未达到目标值(${targetValue})，请填写未达标原因`);
+                alert(`${rowLine} 时段 ${hourSlot} 达成量(${achievedValue})未达到目标值(${targetValue})，请填写未达标原因`);
                 row.querySelector('.reason')?.focus();
                 return;
             }
         }
 
-        const key = `${lineName}_${defaultDate}_${hourSlot}`;
+        const key = `${rowLine}_${defaultDate}_${hourSlot}`;
         const existing = localStorage.getItem(`record_${key}`);
         // 如果是已保存的行，直接覆盖；如果是新行，询问是否覆盖
         if (existing && !row.classList.contains('saved-row')) {
-            if (!confirm(`该线体该时段已有记录，是否覆盖？`)) {
+            if (!confirm(`${rowLine} ${hourSlot}已有记录，是否覆盖？`)) {
                 return;
             }
         }
 
         const record = {
-            line_name: lineName,
+            line_name: rowLine,
             smt_code: smtCode,
             target_value: targetValue,
             achieved_value: achievedValue,
@@ -2275,6 +2395,8 @@ function convertToSavedRow(row, record) {
     row.classList.add('saved-row');
     row.classList.remove('input-row');
     row.dataset.expanded = 'false'; // 初始化状态为折叠
+    row.dataset.line = record.line_name || row.dataset.line || '';
+    row.dataset.slot = record.hour_slot || row.dataset.slot || '';
     const rate = record.target_value > 0 ? ((record.achieved_value / record.target_value) * 100).toFixed(1) : 0;
     const rateColor = rate >= 100 ? '#16a34a' : '#dc2626';
     
@@ -2382,9 +2504,10 @@ async function editSavedRecord(btn) {
     let recordData = null;
     try { recordData = JSON.parse(row.dataset.recordData || 'null'); } catch (_) {}
     if (!recordData) {
-        // 兜底：从当前表单推断
+        // 兜底：从当前表单推断（含全部线体模式的行级线体）
+        const fallbackLine = row.dataset.line || (document.getElementById('line-name').value === ALL_LINES_VALUE ? '' : document.getElementById('line-name').value);
         recordData = {
-            line_name: document.getElementById('line-name').value,
+            line_name: fallbackLine,
             record_date: document.getElementById('record-date').value,
             hour_slot: row.querySelector('.hour-slot')?.value || row.dataset.slot,
             shift: document.getElementById('shift').value
@@ -2430,16 +2553,21 @@ async function editSavedRecord(btn) {
         rest_minutes: restMinutes
     };
 
-    // 保存到localStorage（优先用当前表单的日期/线体，避免错位）
-    const lineName = recordData.line_name || document.getElementById('line-name').value;
+    // 保存到localStorage（优先用记录/行级线体，避免全部线体模式错位）
+    const lineName = recordData.line_name || row.dataset.line || '';
     const recDate = recordData.record_date || document.getElementById('record-date').value;
     const hourSlot = recordData.hour_slot || row.querySelector('.hour-slot')?.value;
+    if (!lineName || !recDate || !hourSlot) {
+        alert('该行缺少线体/日期/时段信息，无法保存');
+        return;
+    }
     updatedRecord.line_name = lineName;
     updatedRecord.record_date = recDate;
     updatedRecord.hour_slot = hourSlot;
 
     const key = `${lineName}_${recDate}_${hourSlot}`;
     localStorage.setItem(`record_${key}`, JSON.stringify(updatedRecord));
+    row.dataset.line = lineName;
     row.dataset.recordData = JSON.stringify(updatedRecord);
 
     // 同步云端
@@ -2500,7 +2628,7 @@ function loadDashboard() {
 }
 
 function renderDashboardUI(date, shift, lineFilter) {
-    const lines = ['SMT1线', 'SMT2线', 'SMT3线', 'SMT4线', 'SMT5线', 'SMT6线', 'SMT7线'];
+    const lines = LINES;
     const content = document.getElementById('dashboard-content');
     content.innerHTML = '';
 
@@ -2650,7 +2778,7 @@ function exportDashboardChart() {
     toast.innerHTML = '⏳ 正在生成看板长图...';
     document.body.appendChild(toast);
     
-    const lines = ['SMT1线', 'SMT2线', 'SMT3线', 'SMT4线', 'SMT5线', 'SMT6线', 'SMT7线'];
+    const lines = LINES;
     const targetLines = lineFilter ? [lineFilter] : lines;
     
     // 确定时段
@@ -2892,7 +3020,7 @@ function exportProductionReport() {
     toast.innerHTML = '⏳ 正在生成报告...';
     document.body.appendChild(toast);
     
-    const lines = ['SMT1线', 'SMT2线', 'SMT3线', 'SMT4线', 'SMT5线', 'SMT6线', 'SMT7线'];
+    const lines = LINES;
     const allSlots = [...DAY_SLOTS, ...NIGHT_SLOTS];
     
     // 收集日期范围内所有数据
