@@ -1,4 +1,4 @@
-<!-- AI生成 -->
+﻿<!-- AI生成 -->
 <!DOCTYPE html>
 <!-- saved from url=(0076)file:///D:/Users/wanjh38/Downloads/3ec8c544-69a5-4367-bfa3-b5b99b2ff348.html -->
 <html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
@@ -1191,19 +1191,17 @@ const REASON_CATEGORIES = [
     { name: '其他', type: '其他' }
 ];
 
-// 白班时段
-const DAY_SLOTS = [
-    '8:00-9:00', '9:00-10:00', '10:00-11:00', '11:00-12:00',
-    '12:00-13:00', '13:00-14:00', '14:00-15:00', '15:00-16:00',
-    '16:00-17:00', '17:00-18:00', '18:00-19:00', '19:00-20:00'
-];
+// 白班时段（合并大段）
+const DAY_SLOTS = ['8:00-9:00', '9:00-14:00', '14:00-18:00', '18:00-20:00'];
 
-// 夜班时段
-const NIGHT_SLOTS = [
-    '20:00-21:00', '21:00-22:00', '22:00-23:00', '23:00-24:00',
-    '0:00-1:00', '1:00-2:00', '2:00-3:00', '3:00-4:00',
-    '4:00-5:00', '5:00-6:00', '6:00-7:00', '7:00-8:00'
-];
+// 夜班时段（21-2、2-6、6-8 跨次日，仍记在开班当日）
+const NIGHT_SLOTS = ['20:00-21:00', '21:00-2:00', '2:00-6:00', '6:00-8:00'];
+
+// 各大段通报时间标记（按段尾时间）
+const SLOT_NOTIFY = {
+    '8:00-9:00': '9点通报', '9:00-14:00': '14点通报', '14:00-18:00': '18点通报', '18:00-20:00': '20点通报',
+    '20:00-21:00': '21点通报', '21:00-2:00': '次日2点通报', '2:00-6:00': '次日6点通报', '6:00-8:00': '次日8点通报'
+};
 
 // 线体清单与“全部线体”标记
 const LINES = ['SMT1线', 'SMT2线', 'SMT3线', 'SMT4线', 'SMT5线', 'SMT6线', 'SMT7线'];
@@ -1211,6 +1209,96 @@ const ALL_LINES_VALUE = '__ALL__';
 
 function getSlotsForShift(shift) {
     return shift === '夜班' ? NIGHT_SLOTS : DAY_SLOTS;
+}
+
+// —— 时段通用辅助（兼容任意时段串，含拆分产生的子时段）——
+function slotToMinutes(t) {
+    const parts = String(t).split(':').map(Number);
+    return (parts[0] || 0) * 60 + (parts[1] || 0);
+}
+
+// 返回 { startMin, endMin(>startMin，可能>1440), crossesMidnight }
+function slotBounds(slot) {
+    const [s, e] = String(slot).split('-');
+    const startMin = slotToMinutes(s);
+    let endMin = slotToMinutes(e);
+    if (endMin <= startMin) endMin += 1440; // 跨天（如 21:00-2:00）
+    return { startMin: startMin, endMin: endMin, crossesMidnight: endMin > 1440 };
+}
+
+function slotDurationMinutes(slot) {
+    const b = slotBounds(slot);
+    return b.endMin - b.startMin;
+}
+
+// 目标值 = UPH × 时段小时数
+function slotTargetValue(slot, uph) {
+    return Math.round((uph || 0) * (slotDurationMinutes(slot) / 60));
+}
+
+// 完整展示：跨天段显示“21:00-次日2:00”
+function slotDisplayLabel(slot) {
+    const b = slotBounds(slot);
+    const fmt = m => { m = m % 1440; const h = Math.floor(m / 60), mm = m % 60; return `${h}:${String(mm).padStart(2, '0')}`; };
+    return `${fmt(b.startMin)}-${b.crossesMidnight ? '次日' : ''}${fmt(b.endMin)}`;
+}
+
+// 短标签（图表/表格用）：如 8~9、9~14、21~次日2
+function slotShortLabel(slot) {
+    const b = slotBounds(slot);
+    const fmt = m => { m = m % 1440; const h = Math.floor(m / 60), mm = m % 60; return mm ? `${h}:${String(mm).padStart(2, '0')}` : `${h}`; };
+    return `${fmt(b.startMin)}~${b.crossesMidnight ? '次日' : ''}${fmt(b.endMin)}`;
+}
+
+function slotNotifyLabel(slot) { return SLOT_NOTIFY[slot] || ''; }
+
+// 行头展示（时段 + 跨天提示 + 通报标记）
+function slotHeaderHtml(slot) {
+    const notify = slotNotifyLabel(slot);
+    const base = slotDisplayLabel(slot);
+    return notify ? `${base} <span style="font-size:12px;font-weight:600;opacity:.75;margin-left:6px;">${notify}</span>` : base;
+}
+
+// 读取一条时段记录：优先大段记录；没有则把窗口内的旧小时记录聚合（兼容历史数据）
+function readRecordLoose(line, date, slot) {
+    try {
+        const r = JSON.parse(localStorage.getItem(`record_${line}_${date}_${slot}`) || 'null');
+        if (r && r.smt_code) return r;
+    } catch (_) {}
+    return null;
+}
+
+function collectSlotData(line, date, slot) {
+    const rec = readRecordLoose(line, date, slot);
+    if (rec) return rec;
+    // 兼容旧小时数据：把落在该大段窗口内的小时记录求和
+    const b = slotBounds(slot);
+    const found = [];
+    for (let h = 0; h < 24; h++) {
+        let norm = h * 60;
+        if (norm < b.startMin) norm += 1440;
+        if (norm >= b.startMin && norm < b.endMin) {
+            const r = readRecordLoose(line, date, `${h}:00-${h + 1}:00`);
+            if (r) found.push(r);
+        }
+    }
+    if (!found.length) return null;
+    let target = 0, achieved = 0, rest = 0;
+    const codes = [], cats = [], reasons = [];
+    found.forEach(r => {
+        target += r.target_value || 0;
+        achieved += r.achieved_value || 0;
+        rest += r.rest_minutes || 0;
+        if (r.smt_code && codes.indexOf(r.smt_code) === -1) codes.push(r.smt_code);
+        if (r.reason_category && cats.indexOf(r.reason_category) === -1) cats.push(r.reason_category);
+        if (r.reason && reasons.indexOf(r.reason) === -1) reasons.push(r.reason);
+    });
+    return {
+        line_name: line, record_date: date, hour_slot: slot,
+        smt_code: codes.join('/'), target_value: target, achieved_value: achieved,
+        reason_category: cats.join('、'), reason: reasons.join('；'),
+        rest_minutes: rest, shift: found[0].shift
+    };
 }
 
 function getSelectedSlotFilter() {
@@ -1402,8 +1490,7 @@ function countLocalRecords(line, date) {
     const filledSlots = [];
     lines.forEach(ln => {
         slots.forEach(slot => {
-            const key = `record_${ln}_${date}_${slot}`;
-            if (localStorage.getItem(key)) {
+            if (collectSlotData(ln, date, slot)) {
                 filled++;
                 filledSlots.push(lines.length > 1 ? `${ln} ${slot}` : slot);
             }
@@ -1614,7 +1701,7 @@ function addSavedRow(slot, record, shift, lineName) {
             <input type="hidden" class="hour-slot" value="${safe(slot)}">
             <span>
                 <span class="toggle-icon" style="margin-right:8px;font-size:12px;">▶</span>
-                ${safe(slot)}
+                ${slotHeaderHtml(slot)}
                 <span style="color:${achievedColor};font-weight:bold;margin-left:8px;">达成: ${record.achieved_value}/${record.target_value} (${rate}%)</span>
             </span>
             <span class="edit-hint" style="font-size:12px;color:#6b7280;">✓ 已填写 · 点击修改</span>
@@ -1625,6 +1712,7 @@ function addSavedRow(slot, record, shift, lineName) {
                     <label>型号（输入编码可模糊匹配）</label>
                     <input type="text" class="smt-code-input" value="${safe(record.smt_code)}" oninput="onCodeInput(this)" onblur="setTimeout(()=>hideMatchList(this),200)">
                     <input type="hidden" class="target-value" value="${record.target_value || 0}">
+                    <div class="target-hint" style="font-size:12px;color:#1d4ed8;font-weight:600;margin-top:2px;"></div>
                     <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.1);"></div>
                 </div>
                 <div class="form-group">
@@ -1635,7 +1723,7 @@ function addSavedRow(slot, record, shift, lineName) {
             <div class="form-row">
                 <div class="form-group">
                     <label>休息分钟数</label>
-                    <input type="number" class="rest-minutes" value="${record.rest_minutes || 0}" min="0" max="60">
+                    <input type="number" class="rest-minutes" value="${record.rest_minutes || 0}" min="0" max="${slotDurationMinutes(slot)}">
                 </div>
                 <div class="form-group">
                     <label class="category-label">异常类别</label>
@@ -1661,6 +1749,14 @@ function addSavedRow(slot, record, shift, lineName) {
     `;
 
     document.getElementById('input-rows').appendChild(row);
+
+    // 初始化已保存行的目标提示
+    const hintEl = row.querySelector('.target-hint');
+    if (hintEl && record.target_value) {
+        const hours = (slotDurationMinutes(record.hour_slot || slot) / 60);
+        const hoursText = Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
+        hintEl.textContent = `目标 ${record.target_value}（${hoursText}）`;
+    }
 }
 
 function clearSavedRecord(btn) {
@@ -1700,7 +1796,8 @@ function showSplitDialog(btn) {
     const [startStr, endStr] = slot.split('-');
     const [startH, startM] = startStr.split(':').map(Number);
     const [endH, endM] = endStr.split(':').map(Number);
-    const totalMinutes = (endH * 60 + endM) - (startH * 60 + startM);
+    let totalMinutes = (endH * 60 + endM) - (startH * 60 + startM);
+    if (totalMinutes <= 0) totalMinutes += 1440; // 跨天时段（如 21:00-2:00）
     
     // 创建选项文本
     let optionsText = '';
@@ -1832,7 +1929,7 @@ function createSubSlotRow(slotStr, parentSlot, lineName) {
         <div class="time-slot-header" style="background:#e0f2fe;padding:8px 12px;border-radius:6px;font-weight:500;color:#0369a1;font-size:13px;border-bottom:1px solid #7dd3fc;margin-left:20px;">
             <input type="hidden" class="hour-slot" value="${slotStr}">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>↳ ${slotStr}</span>
+                <span>↳ ${slotHeaderHtml(slotStr)}</span>
                 <div style="display:flex;gap:6px;align-items:center;">
                     <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:#3b82f6;color:white;border:none;padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;">分解</button>
                     <button type="button" onclick="deleteSubSlot(this)" style="background:#ef4444;color:white;border:none;padding:3px 8px;border-radius:4px;font-size:11px;cursor:pointer;">删除</button>
@@ -1853,7 +1950,7 @@ function createSubSlotRow(slotStr, parentSlot, lineName) {
         <div class="form-row" style="margin-left:20px;">
             <div class="form-group">
                 <label style="font-size:11px;">休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60" style="font-size:13px;padding:8px 10px;">
+                <input type="number" class="rest-minutes" value="0" min="0" max="${slotDurationMinutes(slotStr) || 60}" style="font-size:13px;padding:8px 10px;">
             </div>
             <div class="form-group">
                 <label class="category-label" style="font-size:11px;">异常类别</label>
@@ -1914,7 +2011,7 @@ function mergeSubSlots(btn) {
     const headerDiv = header.querySelector('div');
     const btnContainer = headerDiv.querySelector('div:last-child');
     btnContainer.innerHTML = `
-        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
+        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（段内换型/停机细分）</button>
     `;
     
     // 恢复表单显示
@@ -1956,7 +2053,7 @@ function deleteSubSlot(btn) {
             const headerDiv = header.querySelector('div');
             const btnContainer = headerDiv.querySelector('div:last-child');
             btnContainer.innerHTML = `
-                <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
+                <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（段内换型/停机细分）</button>
             `;
             
             // 恢复表单显示
@@ -1987,10 +2084,10 @@ function createInputRow(presetSlot = '', isSubSlot = false, parentSlot = null, l
         <div class="time-slot-header" style="background:#f0f7ff;padding:10px 14px;border-radius:8px;font-weight:600;color:#1e40af;font-size:15px;border-bottom:2px solid #3b82f6;">
             <input type="hidden" class="hour-slot" value="${presetSlot}">
             <div style="display:flex;justify-content:space-between;align-items:center;">
-                <span>${presetSlot}</span>
+                <span>${slotHeaderHtml(presetSlot)}</span>
                 <div style="display:flex;gap:8px;align-items:center;">
                     ${!isSubSlot ? `
-                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（仅该小时内换型其他型号）</button>
+                        <button type="button" class="btn-split" onclick="showSplitDialog(this)" style="background:white;color:#3b82f6;border:1px solid #3b82f6;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">时段分解（段内换型/停机细分）</button>
                     ` : ''}
                     ${isSubSlot ? `
                         <button type="button" onclick="deleteSubSlot(this)" style="background:#ef4444;color:white;border:none;padding:4px 10px;border-radius:4px;font-size:12px;cursor:pointer;">删除</button>
@@ -2003,6 +2100,7 @@ function createInputRow(presetSlot = '', isSubSlot = false, parentSlot = null, l
                 <label>型号（输入编码可模糊匹配）</label>
                 <input type="text" class="smt-code-input" placeholder="输入编码" oninput="onCodeInput(this)" onblur="setTimeout(()=>hideMatchList(this),200)">
                 <input type="hidden" class="target-value" value="">
+                <div class="target-hint" style="font-size:12px;color:#1d4ed8;font-weight:600;margin-top:2px;">目标: —</div>
                 <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
             </div>
             <div class="form-group">
@@ -2013,7 +2111,7 @@ function createInputRow(presetSlot = '', isSubSlot = false, parentSlot = null, l
         <div class="form-row">
             <div class="form-group">
                 <label>休息分钟数</label>
-                <input type="number" class="rest-minutes" value="0" min="0" max="60">
+                <input type="number" class="rest-minutes" value="0" min="0" max="${slotDurationMinutes(presetSlot) || 60}">
             </div>
             <div class="form-group">
                 <label class="category-label">异常类别</label>
@@ -2032,7 +2130,7 @@ function createInputRow(presetSlot = '', isSubSlot = false, parentSlot = null, l
     return row;
 }
 
-// 检查未达标并更新异常类别标签样式
+// 检查未达标并更新异常类别标签样式（目标 = UPH × 时段小时数）
 function checkUnderTarget(el) {
     if (!el) return;
     const row = el.closest('.input-row') || el.closest('.saved-row');
@@ -2040,11 +2138,13 @@ function checkUnderTarget(el) {
     const codeInput = row.querySelector('.smt-code-input');
     const code = (codeInput && codeInput.value ? codeInput.value : '').trim();
     const uph = SMT_CODES[code] || 0;
+    const slot = (row.querySelector('.hour-slot')?.value) || row.dataset.slot || '';
+    const target = uph > 0 ? slotTargetValue(slot, uph) : 0;
     const achieved = parseInt(el.value) || 0;
     const label = row.querySelector('.category-label');
     if (!label) return;
 
-    if (code && uph > 0 && achieved < uph) {
+    if (code && target > 0 && achieved < target) {
         label.innerHTML = '<span style="color:#dc2626;font-weight:600;">异常类别</span> <span style="color:#dc2626;font-size:12px;">（产量未达标必填）</span>';
     } else {
         label.textContent = '异常类别';
@@ -2125,6 +2225,7 @@ function selectMatch(el, code, uph) {
     input.value = code;
     targetInput.value = uph;
     if (matchList) matchList.style.display = 'none';
+    updateRowTargetHint(row, code, uph);
 
     // 触发未达标检查
     const achievedInput = row.querySelector('.achieved-value');
@@ -2142,12 +2243,27 @@ function hideMatchList(el) {
 
     // 如果输入的值精确匹配，填充目标值
     if (input && targetInput && SMT_CODES[input.value.trim()] !== undefined) {
-        targetInput.value = SMT_CODES[input.value.trim()];
+        const code = input.value.trim();
+        targetInput.value = SMT_CODES[code];
+        updateRowTargetHint(row, code, SMT_CODES[code]);
     }
 
     // 触发未达标检查
     const achievedInput = row.querySelector('.achieved-value');
     checkUnderTarget(achievedInput);
+}
+
+// 行内显示合并后目标（目标 = UPH × 时段小时数）
+function updateRowTargetHint(row, code, uph) {
+    if (!row) return;
+    const hint = row.querySelector('.target-hint');
+    if (!hint) return;
+    if (!code || !uph) { hint.textContent = '目标: —'; return; }
+    const slot = (row.querySelector('.hour-slot')?.value) || row.dataset.slot || '';
+    const hours = (slotDurationMinutes(slot) / 60);
+    const target = slotTargetValue(slot, uph);
+    const hoursText = Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
+    hint.textContent = `目标 ${target}（UPH ${uph} × ${hoursText}）`;
 }
 
 // 异常类别变更
@@ -2190,15 +2306,12 @@ function updateShiftSummary() {
     const slots = getVisibleSlots();
     const targetLines = lineName === ALL_LINES_VALUE ? LINES : [lineName];
     
-    // 从 localStorage 读取筛选范围内的所有记录
+    // 读取筛选范围内的所有记录（兼容旧小时数据聚合）
     targetLines.forEach(ln => {
         slots.forEach(slot => {
-            const key = `record_${ln}_${date}_${slot}`;
-            let record = null;
-            try { record = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
-            
+            const record = collectSlotData(ln, date, slot);
             if (record) {
-                // 使用保存时的 target_value（UPH）
+                // 使用保存时的 target_value（UPH × 小时数）
                 totalTarget += record.target_value || 0;
                 totalAchieved += record.achieved_value || 0;
             }
@@ -2281,7 +2394,7 @@ async function saveAllRecordsAsync() {
         }
 
         const smtCode = row.querySelector('.smt-code-input')?.value.trim();
-        const targetValue = SMT_CODES[smtCode] || 0;
+        const targetValue = slotTargetValue(hourSlot, SMT_CODES[smtCode] || 0);
         const achievedValue = parseInt(row.querySelector('.achieved-value')?.value) || 0;
         const reasonCategory = row.querySelector('.reason-category')?.value;
         const reason = row.querySelector('.reason')?.value.trim();
@@ -2405,7 +2518,7 @@ function convertToSavedRow(row, record) {
             <input type="hidden" class="hour-slot" value="${record.hour_slot || ''}">
             <span>
                 <span class="toggle-icon" style="margin-right:8px;font-size:12px;">▶</span>
-                ${record.hour_slot || ''}
+                ${slotHeaderHtml(record.hour_slot || '')}
                 <span style="font-size:13px;color:${rateColor};margin-left:8px;">达成: ${record.achieved_value}/${record.target_value} (${rate}%)</span>
             </span>
             <span class="edit-hint" style="font-size:12px;color:#6b7280;">✓ 已填写 · 点击修改</span>
@@ -2416,6 +2529,7 @@ function convertToSavedRow(row, record) {
                     <label>型号（输入编码可模糊匹配）</label>
                     <input type="text" class="smt-code-input" value="${record.smt_code}" oninput="onCodeInput(this)" onblur="setTimeout(()=>hideMatchList(this),200)">
                     <input type="hidden" class="target-value" value="${record.target_value}">
+                    <div class="target-hint" style="font-size:12px;color:#1d4ed8;font-weight:600;margin-top:2px;"></div>
                     <div class="match-list" style="display:none;position:absolute;top:100%;left:0;right:0;background:white;border:1px solid #e5e7eb;border-radius:6px;max-height:200px;overflow-y:auto;z-index:100;"></div>
                 </div>
                 <div class="form-group">
@@ -2426,7 +2540,7 @@ function convertToSavedRow(row, record) {
             <div class="form-row">
                 <div class="form-group">
                     <label>休息分钟数</label>
-                    <input type="number" class="rest-minutes" value="${record.rest_minutes}" min="0" max="60">
+                    <input type="number" class="rest-minutes" value="${record.rest_minutes}" min="0" max="${slotDurationMinutes(record.hour_slot) || 60}">
                 </div>
                 <div class="form-group">
                     <label class="category-label">异常类别</label>
@@ -2450,6 +2564,16 @@ function convertToSavedRow(row, record) {
     
     // 存储原始record数据到row的dataset中
     row.dataset.recordData = JSON.stringify(record);
+
+    // 初始化目标提示
+    try {
+        const hintEl = row.querySelector('.target-hint');
+        if (hintEl && record.target_value) {
+            const hours = (slotDurationMinutes(record.hour_slot) / 60);
+            const hoursText = Number.isInteger(hours) ? `${hours}h` : `${hours.toFixed(1)}h`;
+            hintEl.textContent = `目标 ${record.target_value}（${hoursText}）`;
+        }
+    } catch (_) {}
 
     // 如果未达标，触发标签变红
     try {
@@ -2521,7 +2645,7 @@ async function editSavedRecord(btn) {
         row.querySelector('.smt-code-input')?.focus();
         return;
     }
-    const targetValue = SMT_CODES[smtCode] || 0;
+    const targetValue = slotTargetValue(recordData.hour_slot, SMT_CODES[smtCode] || 0);
     const achievedValue = parseInt(row.querySelector('.achieved-value')?.value, 10) || 0;
     const reasonCategory = row.querySelector('.reason-category')?.value || '';
     const reason = (row.querySelector('.reason')?.value || '').trim();
@@ -2640,8 +2764,7 @@ function renderDashboardUI(date, shift, lineFilter) {
         
         if (!shift || shift === '白班') {
             for (const slot of DAY_SLOTS) {
-                const key = `record_${line}_${date}_${slot}`;
-                const record = JSON.parse(localStorage.getItem(key) || 'null');
+                const record = collectSlotData(line, date, slot);
                 if (record) {
                     lineData.push({ ...record, shift: '白班' });
                     chartData.push({ ...record, shift: '白班' });
@@ -2660,8 +2783,7 @@ function renderDashboardUI(date, shift, lineFilter) {
         
         if (!shift || shift === '夜班') {
             for (const slot of NIGHT_SLOTS) {
-                const key = `record_${line}_${date}_${slot}`;
-                const record = JSON.parse(localStorage.getItem(key) || 'null');
+                const record = collectSlotData(line, date, slot);
                 if (record) {
                     lineData.push({ ...record, shift: '夜班' });
                     chartData.push({ ...record, shift: '夜班' });
@@ -2721,7 +2843,7 @@ function renderDashboardUI(date, shift, lineFilter) {
                         const achievedColor = r.achieved_value >= r.target_value ? '#16a34a' : '#dc2626';
                         return `
                             <tr>
-                                <td>${r.hour_slot}</td>
+                                <td>${slotDisplayLabel(r.hour_slot)}</td>
                                 <td>${r.smt_code}</td>
                                 <td>${r.target_value}</td>
                                 <td style="color:${achievedColor};font-weight:bold;">${r.achieved_value}</td>
@@ -2790,14 +2912,13 @@ function exportDashboardChart() {
         slots = slots.concat(NIGHT_SLOTS);
     }
     
-    // 汇总各线体达成数据（按时段累加）
+    // 汇总各线体达成数据（按时段累加，兼容旧小时数据）
     const aggregatedData = [];
     for (const slot of slots) {
         let totalTarget = 0;
         let totalAchieved = 0;
         for (const line of targetLines) {
-            const key = `record_${line}_${date}_${slot}`;
-            const record = JSON.parse(localStorage.getItem(key) || 'null');
+            const record = collectSlotData(line, date, slot);
             if (record) {
                 totalTarget += record.target_value;
                 totalAchieved += record.achieved_value;
@@ -2865,7 +2986,7 @@ function exportDashboardChart() {
                         const diffColor = diff >= 0 ? '#16a34a' : '#dc2626';
                         const achievedColor = r.achieved_value >= r.target_value ? '#16a34a' : '#dc2626';
                         const achievedBg = r.achieved_value < r.target_value ? '#fef2f2' : (r.achieved_value > r.target_value ? '#f0fdf4' : 'transparent');
-                        const label = r.hour_slot.replace(':00-', '~').replace(':00', '');
+                        const label = slotShortLabel(r.hour_slot);
                         return `<tr>
                             <td style="padding:8px;border-bottom:1px solid #f3f4f6;font-weight:bold;">${label}</td>
                             <td style="padding:8px;border-bottom:1px solid #f3f4f6;">${r.target_value}</td>
@@ -2890,7 +3011,7 @@ function exportDashboardChart() {
     
     // 渲染图表
     setTimeout(() => {
-        const labels = aggregatedData.map(r => r.hour_slot.replace(':00-', '~').replace(':00', ''));
+        const labels = aggregatedData.map(r => slotShortLabel(r.hour_slot));
         const achievedData = aggregatedData.map(r => r.achieved_value);
         const targetData = aggregatedData.map(r => r.target_value);
         
@@ -3036,8 +3157,7 @@ function exportProductionReport() {
     for (const date of dateList) {
         for (const line of lines) {
             for (const slot of allSlots) {
-                const key = `record_${line}_${date}_${slot}`;
-                const record = JSON.parse(localStorage.getItem(key) || 'null');
+                const record = collectSlotData(line, date, slot);
                 if (record) {
                     allRecords.push(record);
                 }
@@ -3283,7 +3403,7 @@ function renderLineChart(chartId, lineData) {
     const canvas = document.getElementById(chartId);
     if (!canvas) return;
     
-    const labels = lineData.map(r => r.hour_slot.replace(':', '~').split('-')[0] + '~' + r.hour_slot.split('-')[1]);
+    const labels = lineData.map(r => slotShortLabel(r.hour_slot));
     const achievedData = lineData.map(r => r.achieved_value);
     const targetData = lineData.map(r => r.target_value);
     
