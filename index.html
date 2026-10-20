@@ -1213,32 +1213,40 @@ function getSlotsForShift(shift) {
 
 // —— 时段通用辅助（兼容任意时段串，含拆分产生的子时段）——
 function slotToMinutes(t) {
-    const parts = String(t).split(':').map(Number);
-    return (parts[0] || 0) * 60 + (parts[1] || 0);
+    const parts = String(t).trim().split(':');
+    const h = parseInt(parts[0], 10);
+    if (isNaN(h)) return NaN;
+    const m = parts.length > 1 ? parseInt(parts[1], 10) : 0;
+    return h * 60 + (isNaN(m) ? 0 : m);
 }
 
-// 返回 { startMin, endMin(>startMin，可能>1440), crossesMidnight }
+// 返回 { startMin, endMin(>startMin，可能>1440), crossesMidnight }；解析失败返回 null
 function slotBounds(slot) {
-    const [s, e] = String(slot).split('-');
-    const startMin = slotToMinutes(s);
-    let endMin = slotToMinutes(e);
+    const parts = String(slot || '').split('-');
+    if (parts.length !== 2) return null;
+    const startMin = slotToMinutes(parts[0]);
+    let endMin = slotToMinutes(parts[1]);
+    if (isNaN(startMin) || isNaN(endMin)) return null;
     if (endMin <= startMin) endMin += 1440; // 跨天（如 21:00-2:00）
     return { startMin: startMin, endMin: endMin, crossesMidnight: endMin > 1440 };
 }
 
 function slotDurationMinutes(slot) {
     const b = slotBounds(slot);
-    return b.endMin - b.startMin;
+    return b ? b.endMin - b.startMin : 0;
 }
 
-// 目标值 = UPH × 时段小时数
+// 目标值 = UPH × 时段小时数（无法解析的时段返回 0，不做目标校验）
 function slotTargetValue(slot, uph) {
-    return Math.round((uph || 0) * (slotDurationMinutes(slot) / 60));
+    const b = slotBounds(slot);
+    if (!b) return 0;
+    return Math.round((uph || 0) * ((b.endMin - b.startMin) / 60));
 }
 
 // 完整展示：跨天段显示“21:00-次日2:00”
 function slotDisplayLabel(slot) {
     const b = slotBounds(slot);
+    if (!b) return String(slot || '');
     const fmt = m => { m = m % 1440; const h = Math.floor(m / 60), mm = m % 60; return `${h}:${String(mm).padStart(2, '0')}`; };
     return `${fmt(b.startMin)}-${b.crossesMidnight ? '次日' : ''}${fmt(b.endMin)}`;
 }
@@ -1246,6 +1254,7 @@ function slotDisplayLabel(slot) {
 // 短标签（图表/表格用）：如 8~9、9~14、21~次日2
 function slotShortLabel(slot) {
     const b = slotBounds(slot);
+    if (!b) return String(slot || '');
     const fmt = m => { m = m % 1440; const h = Math.floor(m / 60), mm = m % 60; return mm ? `${h}:${String(mm).padStart(2, '0')}` : `${h}`; };
     return `${fmt(b.startMin)}~${b.crossesMidnight ? '次日' : ''}${fmt(b.endMin)}`;
 }
@@ -1259,7 +1268,7 @@ function slotHeaderHtml(slot) {
     return notify ? `${base} <span style="font-size:12px;font-weight:600;opacity:.75;margin-left:6px;">${notify}</span>` : base;
 }
 
-// 读取一条时段记录：优先大段记录；没有则把窗口内的旧小时记录聚合（兼容历史数据）
+// 读取一条时段记录：优先大段记录；没有则把窗口内的旧小时/子时段记录聚合（兼容历史数据）
 function readRecordLoose(line, date, slot) {
     try {
         const r = JSON.parse(localStorage.getItem(`record_${line}_${date}_${slot}`) || 'null');
@@ -1271,17 +1280,26 @@ function readRecordLoose(line, date, slot) {
 function collectSlotData(line, date, slot) {
     const rec = readRecordLoose(line, date, slot);
     if (rec) return rec;
-    // 兼容旧小时数据：把落在该大段窗口内的小时记录求和
+    // 兜底：聚合该线+日期下所有落在窗口内的记录（旧小时数据、时段分解产生的子时段等）
     const b = slotBounds(slot);
+    if (!b) return null;
+    const prefix = `record_${line}_${date}_`;
     const found = [];
-    for (let h = 0; h < 24; h++) {
-        let norm = h * 60;
-        if (norm < b.startMin) norm += 1440;
-        if (norm >= b.startMin && norm < b.endMin) {
-            const r = readRecordLoose(line, date, `${h}:00-${h + 1}:00`);
-            if (r) found.push(r);
+    try {
+        for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (!key || key.indexOf(prefix) !== 0) continue;
+            const subSlot = key.slice(prefix.length);
+            if (subSlot === slot) continue;
+            const sb = slotBounds(subSlot);
+            if (!sb) continue; // 非时段键（如云端元数据）不计入
+            if (sb.startMin >= b.startMin && sb.endMin <= b.endMin) {
+                let r = null;
+                try { r = JSON.parse(localStorage.getItem(key) || 'null'); } catch (_) {}
+                if (r && r.smt_code) found.push(r);
+            }
         }
-    }
+    } catch (_) {}
     if (!found.length) return null;
     let target = 0, achieved = 0, rest = 0;
     const codes = [], cats = [], reasons = [];
@@ -1299,6 +1317,32 @@ function collectSlotData(line, date, slot) {
         reason_category: cats.join('、'), reason: reasons.join('；'),
         rest_minutes: rest, shift: found[0].shift
     };
+}
+
+// 清除该线+日期下落在指定时段窗口内的旧小时/子时段记录，并同步删除云端对应行
+function purgeLegacySlotRecords(line, date, slot) {
+    const b = slotBounds(slot);
+    if (!b || !line || !date) return [];
+    const prefix = `record_${line}_${date}_`;
+    const removed = [];
+    try {
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+            const key = localStorage.key(i);
+            if (!key || key.indexOf(prefix) !== 0) continue;
+            const subSlot = key.slice(prefix.length);
+            if (subSlot === slot) continue;
+            const sb = slotBounds(subSlot);
+            if (!sb) continue; // 非时段键不动
+            if (sb.startMin >= b.startMin && sb.endMin <= b.endMin) {
+                localStorage.removeItem(key);
+                removed.push(subSlot);
+                if (dbReady && db) {
+                    rest('records?line_name=eq.' + encodeURIComponent(line) + '&record_date=eq.' + encodeURIComponent(date) + '&hour_slot=eq.' + encodeURIComponent(subSlot), { method: 'DELETE' }).catch(function(){});
+                }
+            }
+        }
+    } catch (_) {}
+    return removed;
 }
 
 function getSelectedSlotFilter() {
@@ -1641,13 +1685,10 @@ function updateTimeSlots() {
         targetLines.forEach(ln => {
             if (line === ALL_LINES_VALUE) addLineGroupHeader(ln);
             slots.forEach(slot => {
-                const key = `record_${ln}_${date}_${slot}`;
-                let existingRecord = null;
-                try {
-                    existingRecord = JSON.parse(localStorage.getItem(key) || 'null');
-                } catch (_) {}
+                // 与统计口径一致：优先合并键记录，否则用窗口内旧小时/子时段数据的聚合兜底
+                const existingRecord = collectSlotData(ln, date, slot);
 
-                if (existingRecord && existingRecord.smt_code) {
+                if (existingRecord) {
                     // 已录入，显示折叠状态
                     addSavedRow(slot, existingRecord, shift, ln);
                 } else {
@@ -1782,6 +1823,8 @@ function clearSavedRecord(btn) {
     if (dbReady && db) {
         rest('records?line_name=eq.'+encodeURIComponent(line)+'&record_date=eq.'+encodeURIComponent(date)+'&hour_slot=eq.'+encodeURIComponent(slot), { method: 'DELETE' }).catch(function(){});
     }
+    // 同时清除该窗口内的旧小时/子时段数据，避免“清除了但统计又出现”
+    purgeLegacySlotRecords(line, date, slot);
     updateTimeSlots();
 }
 
@@ -2398,7 +2441,14 @@ async function saveAllRecordsAsync() {
         const achievedValue = parseInt(row.querySelector('.achieved-value')?.value) || 0;
         const reasonCategory = row.querySelector('.reason-category')?.value;
         const reason = row.querySelector('.reason')?.value.trim();
-        const restMinutes = parseInt(row.querySelector('.rest-minutes')?.value) || 0;
+        let restMinutes = parseInt(row.querySelector('.rest-minutes')?.value) || 0;
+        // 休息分钟不得超过该时段时长
+        const restCap = slotDurationMinutes(hourSlot);
+        if (restCap > 0 && restMinutes > restCap) {
+            restMinutes = restCap;
+            const restInput = row.querySelector('.rest-minutes');
+            if (restInput) restInput.value = restCap;
+        }
 
         if (!hourSlot || !smtCode || !rowLine) {
             continue;
@@ -2442,6 +2492,8 @@ async function saveAllRecordsAsync() {
 
         records.push(record);
         localStorage.setItem(`record_${key}`, JSON.stringify(record));
+        // 合并键已写入：清除该窗口内的旧小时/子时段数据并同步删除云端对应行
+        purgeLegacySlotRecords(rowLine, defaultDate, hourSlot);
 
         // 如果是已保存的行，更新其dataset并保持展开状态
         if (row.classList.contains('saved-row')) {
@@ -2649,7 +2701,14 @@ async function editSavedRecord(btn) {
     const achievedValue = parseInt(row.querySelector('.achieved-value')?.value, 10) || 0;
     const reasonCategory = row.querySelector('.reason-category')?.value || '';
     const reason = (row.querySelector('.reason')?.value || '').trim();
-    const restMinutes = parseInt(row.querySelector('.rest-minutes')?.value, 10) || 0;
+    let restMinutes = parseInt(row.querySelector('.rest-minutes')?.value, 10) || 0;
+    // 休息分钟不得超过该时段时长
+    const restCap = slotDurationMinutes(recordData.hour_slot);
+    if (restCap > 0 && restMinutes > restCap) {
+        restMinutes = restCap;
+        const restInput = row.querySelector('.rest-minutes');
+        if (restInput) restInput.value = restCap;
+    }
 
     // 验证：如果达成量未达到UPH值，必须填写异常类别和未达标原因
     if (targetValue > 0 && achievedValue < targetValue) {
@@ -2691,6 +2750,8 @@ async function editSavedRecord(btn) {
 
     const key = `${lineName}_${recDate}_${hourSlot}`;
     localStorage.setItem(`record_${key}`, JSON.stringify(updatedRecord));
+    // 合并键已写入：清除该窗口内的旧小时/子时段数据并同步删除云端对应行
+    purgeLegacySlotRecords(lineName, recDate, hourSlot);
     row.dataset.line = lineName;
     row.dataset.recordData = JSON.stringify(updatedRecord);
 
