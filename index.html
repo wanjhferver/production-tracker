@@ -1880,7 +1880,7 @@ function confirmSplit(slot, splitMinutes, lineName) {
     let currentRow = null;
     rows.forEach((row) => {
         const lineMatch = !lineName || (row.dataset.line || '') === lineName || !row.dataset.line;
-        if (row.dataset.slot === slot && row.dataset.isSubSlot !== 'true' && lineMatch) {
+        if (row.dataset.slot === slot && lineMatch) {
             currentRow = row;
         }
     });
@@ -1890,8 +1890,8 @@ function confirmSplit(slot, splitMinutes, lineName) {
     const parentSlot = currentRow.dataset.slot;
     const parentLine = currentRow.dataset.line || lineName || '';
     
-    // 检查是否已经有子时段（避免重复拆分，同线同父时段）
-    const existingSubRows = Array.from(rows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
+    // 检查是否已经有直属子时段（避免重复拆分，同线同父时段；子时段行本身仍可再拆分）
+    const existingSubRows = Array.from(rows).filter(r => r.dataset.parentSlot === currentRow.dataset.slot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
     if (existingSubRows.length > 0) {
         alert('该时段已经拆分过了');
         return;
@@ -1959,6 +1959,29 @@ function confirmSplit(slot, splitMinutes, lineName) {
     updateShiftSummary();
 }
 
+// 递归收集某行的全部后代子时段行（子、孙……）
+function getDescendantSubRows(rootRow) {
+    const allRows = document.querySelectorAll('.input-row');
+    const parentSlot = rootRow.dataset.slot;
+    const parentLine = rootRow.dataset.line || '';
+    const direct = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
+    let result = [...direct];
+    direct.forEach(r => {
+        result = result.concat(getDescendantSubRows(r));
+    });
+    return result;
+}
+
+// 删除单条时段记录（本地 localStorage + 云端）
+function removeSlotRecord(line, date, slot) {
+    if (!line || !date || !slot) return;
+    const key = `record_${line}_${date}_${slot}`;
+    localStorage.removeItem(key);
+    if (dbReady && db) {
+        rest('records?line_name=eq.' + encodeURIComponent(line) + '&record_date=eq.' + encodeURIComponent(date) + '&hour_slot=eq.' + encodeURIComponent(slot), { method: 'DELETE' }).catch(function(){});
+    }
+}
+
 // 创建子时段行（样式更小，缩进显示）
 function createSubSlotRow(slotStr, parentSlot, lineName) {
     const row = document.createElement('div');
@@ -2012,20 +2035,20 @@ function createSubSlotRow(slotStr, parentSlot, lineName) {
     return row;
 }
 
-// 切换子时段的显示/隐藏
+// 切换子时段的显示/隐藏（支持嵌套层级，收起/展开全部后代）
 function toggleSubSlots(btn) {
     const row = btn.closest('.input-row');
-    const parentSlot = row.dataset.slot;
     const parentLine = row.dataset.line || '';
     const allRows = document.querySelectorAll('.input-row');
-    const subRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
-    
-    const isHidden = subRows[0]?.style.display === 'none';
-    
-    subRows.forEach(r => {
+    const direct = Array.from(allRows).filter(r => r.dataset.parentSlot === row.dataset.slot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine);
+    const descendants = [];
+    direct.forEach(r => descendants.push(...getDescendantSubRows(r)));
+    const targets = [...direct, ...descendants];
+    if (targets.length === 0) return;
+    const isHidden = targets[0]?.style.display === 'none';
+    targets.forEach(r => {
         r.style.display = isHidden ? '' : 'none';
     });
-    
     btn.textContent = isHidden ? '收起子时段' : '展开子时段';
 }
 
@@ -2041,8 +2064,17 @@ function mergeSubSlots(btn) {
     
     if (!confirm('确定要合并还原为整时段吗？子时段的数据将丢失。')) return;
     
-    // 删除所有子时段
-    subRows.forEach(r => r.remove());
+    // 删除所有子时段及其后代（连同本地与云端记录）
+    const mergeDate = document.getElementById('record-date').value;
+    subRows.forEach(r => {
+        const descendants = getDescendantSubRows(r);
+        descendants.forEach(d => {
+            removeSlotRecord(d.dataset.line || '', mergeDate, d.dataset.slot || '');
+            d.remove();
+        });
+        removeSlotRecord(r.dataset.line || '', mergeDate, r.dataset.slot || '');
+        r.remove();
+    });
     
     // 恢复原时段行样式
     row.dataset.isParent = 'false';
@@ -2076,10 +2108,18 @@ function deleteSubSlot(btn) {
     
     if (subRows.length === 0) return;
     
-    // 删除当前子时段行
+    // 先删除当前子时段的全部后代（连同记录）
+    const delDate = document.getElementById('record-date').value;
+    const descendants = getDescendantSubRows(row);
+    descendants.forEach(d => {
+        removeSlotRecord(d.dataset.line || '', delDate, d.dataset.slot || '');
+        d.remove();
+    });
+    // 再删除当前行本身（连同记录）
+    removeSlotRecord(row.dataset.line || '', delDate, row.dataset.slot || '');
     row.remove();
     
-    // 检查是否还有剩余的子时段
+    // 检查是否还有剩余的直属子时段
     const remainingSubRows = Array.from(allRows).filter(r => r.dataset.parentSlot === parentSlot && r.dataset.isSubSlot === 'true' && (r.dataset.line || '') === parentLine && r !== row);
     
     // 如果没有剩余子时段了，自动合并还原原时段
