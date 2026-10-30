@@ -897,7 +897,7 @@ async function initSupabase() {
         await probeSupabase(10000);
         dbReady = true;
         db = { __rest: true };
-        console.log('✅ Supabase REST 就绪 keyLen=' + SUPABASE_ANON_KEY.length); if (SUPABASE_ANON_KEY.length !== 208) { lastCloudError = 'API Key 长度异常(' + SUPABASE_ANON_KEY.length + ')'; dbReady = false; db = null; }
+        console.log('✅ Supabase REST 就绪 keyLen=' + SUPABASE_ANON_KEY.length);
     } catch (e) {
         lastCloudError = e.message || String(e);
         console.warn('Supabase初始化失败:', e);
@@ -1493,8 +1493,7 @@ function restoreFormMeta() {
 
         if (raw) {
             const meta = JSON.parse(raw);
-            // 日期：优先上次；若上次不是今天且无特殊需要，仍用上次（可回看）
-            if (meta.date) document.getElementById('record-date').value = meta.date;
+            // 日期始终保持当天，不恢复上次日期，避免误填到昨天或更早
             if (meta.shift) document.getElementById('shift').value = meta.shift;
             rebuildSlotFilterOptions(false);
             if (meta.line) {
