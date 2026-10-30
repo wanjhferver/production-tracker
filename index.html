@@ -2575,10 +2575,13 @@ async function saveAllRecordsAsync() {
         const result = await uploadRecordsBatch(records);
         if (result.ok) {
             cloudMsg = `已同步云端 ${result.count} 条`;
+            showDbStatus('connected');
         } else if (result.skipped) {
             cloudMsg = '云端未就绪，仅本地已保存';
+            showDbStatus('local', '云端未就绪');
         } else {
             cloudMsg = '本地已保存，云端同步失败（已保留本地）';
+            showDbStatus('local', '云端同步失败，数据仅保存本地');
         }
     }
 
@@ -2590,6 +2593,10 @@ async function saveAllRecordsAsync() {
     persistFormMeta();
     // 重绘时段列表，显示「已填写」状态
     updateTimeSlots();
+    // 若看板页正在显示，保存后自动刷新看板，使新数据立即可见
+    if (!document.getElementById('dashboard-page').classList.contains('hidden')) {
+        loadDashboard();
+    }
     // 滚到下一个未填时段，方便连续录入
     setTimeout(scrollToFirstUnfilled, 200);
 }
