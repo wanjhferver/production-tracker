@@ -1,4 +1,4 @@
-﻿<!-- AI生成 -->
+<!-- AI生成 -->
 <!DOCTYPE html>
 <!-- saved from url=(0076)file:///D:/Users/wanjh38/Downloads/3ec8c544-69a5-4367-bfa3-b5b99b2ff348.html -->
 <html lang="zh-CN"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
@@ -863,7 +863,7 @@ async function rest(path, options, timeoutMs) {
         const res = await fetch(SUPABASE_URL + '/rest/v1/' + String(path).replace(/^\//, ''), {
             method: (options && options.method) || 'GET',
             body: options && options.body,
-            headers: restHeaders(options && options.body ? { 'Content-Type': 'application/json' } : (options && options.headers)),
+            headers: restHeaders(Object.assign({}, options && options.headers, options && options.body ? { 'Content-Type': 'application/json' } : {})),
             signal: ctrl.signal
         });
         clearTimeout(t);
@@ -932,12 +932,16 @@ async function syncSmtCodesFromDB() {
 async function syncSmtCodesToDB() {
     if (!dbReady) return;
     try {
-        await rest('smt_codes?id=gt.0', { method: 'DELETE' });
+        // Upsert：不整表删除，防止写一半失败导致 UPH 表残缺
         const records = Object.entries(SMT_CODES).map(function (entry) {
             return { code: entry[0], uph: entry[1] };
         });
         for (let i = 0; i < records.length; i += 100) {
-            await rest('smt_codes', { method: 'POST', body: JSON.stringify(records.slice(i, i + 100)) });
+            await rest('smt_codes?on_conflict=code', {
+                method: 'POST',
+                headers: { 'Prefer': 'resolution=merge-duplicates' },
+                body: JSON.stringify(records.slice(i, i + 100))
+            });
         }
     } catch (e) {
         console.warn('同步SMT编码到云端失败:', e);
@@ -977,10 +981,9 @@ async function syncRecordsFromDB(opts) {
     const line = opts.line || document.getElementById('line-name').value || '';
     const lastLine = localStorage.getItem('pt_last_line') || '';
     try {
-        let q = 'records?select=*';
+        // 不再按当前选中线体过滤：确保其他线体/其他设备提交的数据也能缓存到本地（看板/进度条依赖本地缓存）
+        let q = 'records?select=*&limit=2000';
         if (date) q += '&record_date=eq.' + encodeURIComponent(date);
-        if (line && line !== ALL_LINES_VALUE) q += '&line_name=eq.' + encodeURIComponent(line);
-        q += '&limit=2000';
         const data = await rest(q);
         if (data) {
             data.forEach(function (row) { cacheRecordToLocal(row, lastLine); });
@@ -1024,11 +1027,12 @@ function recordPayload(record) {
 async function uploadRecordToDB(record) {
     if (!dbReady) return false;
     try {
-        const q = 'records?line_name=eq.' + encodeURIComponent(record.line_name) +
-            '&record_date=eq.' + encodeURIComponent(record.record_date) +
-            '&hour_slot=eq.' + encodeURIComponent(record.hour_slot);
-        await rest(q, { method: 'DELETE' }, 12000);
-        await rest('records', { method: 'POST', body: JSON.stringify(recordPayload(record)) }, 12000);
+        // Upsert：按主键 (line_name, record_date, hour_slot) 覆盖，不删除其他时段的数据
+        await rest('records?on_conflict=line_name,record_date,hour_slot', {
+            method: 'POST',
+            headers: { 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify(recordPayload(record))
+        }, 12000);
         showDbStatus('connected');
         return true;
     } catch (e) {
@@ -1041,20 +1045,13 @@ async function uploadRecordToDB(record) {
 async function uploadRecordsBatch(records) {
     if (!dbReady || !records.length) return { ok: false, skipped: true, count: 0 };
     try {
-        const groups = {};
-        records.forEach(function (r) {
-            const k = r.line_name + '||' + r.record_date;
-            if (!groups[k]) groups[k] = { line: r.line_name, date: r.record_date, rows: [] };
-            groups[k].rows.push(recordPayload(r));
-        });
-        await Promise.all(Object.values(groups).map(async function (g) {
-            const delQ = 'records?line_name=eq.' + encodeURIComponent(g.line) +
-                '&record_date=eq.' + encodeURIComponent(g.date);
-            await rest(delQ, { method: 'DELETE' }, 15000);
-            if (g.rows.length) {
-                await rest('records', { method: 'POST', body: JSON.stringify(g.rows) }, 15000);
-            }
-        }));
+        // Upsert：只覆盖本次提交涉及的时段，绝不触碰该线体+日期的其他记录
+        // （旧版先 DELETE 整条线+日期再写入，会把其他时段已上传的数据一并删掉 —— 2026-11-01 SMT3 白班数据丢失即此原因）
+        await rest('records?on_conflict=line_name,record_date,hour_slot', {
+            method: 'POST',
+            headers: { 'Prefer': 'resolution=merge-duplicates' },
+            body: JSON.stringify(records.map(recordPayload))
+        }, 20000);
         showDbStatus('connected');
         return { ok: true, count: records.length };
     } catch (e) {
@@ -1149,20 +1146,22 @@ async function initCloudSync() {
 function setupRealtimeSync() {
     if (!dbReady) return;
     if (_pollTimer) clearInterval(_pollTimer);
-    let lastLen = -1;
+    let lastSignature = '';
     _pollTimer = setInterval(async function () {
         if (!dbReady) return;
         try {
-            const data = await rest('records?select=id&limit=1', {}, 8000);
-            const n = Array.isArray(data) ? data.length : 0;
-            if (lastLen >= 0 && n !== lastLen) {
+            // 用最新 updated_at + 记录总数作为签名，limit=1 的旧方案永远只看到 0/1，检测不到新增
+            const data = await rest('records?select=updated_at&order=updated_at.desc&limit=1', {}, 8000);
+            const data2 = await rest('records?select=updated_at&order=updated_at.asc&limit=1', {}, 8000);
+            const sig = (data && data[0] && data[0].updated_at || '') + '|' + (data2 && data2[0] && data2[0].updated_at || '');
+            if (lastSignature && sig !== lastSignature) {
                 await syncRecordsFromDB();
                 if (!document.getElementById('dashboard-page').classList.contains('hidden')) loadDashboard();
                 updateTimeSlots();
                 updateShiftSummary();
                 updateFillStatus();
             }
-            lastLen = n;
+            lastSignature = sig;
         } catch (e) {}
     }, 45000);
     console.log('✅ 云端轮询同步已开启（45s）');
@@ -1260,6 +1259,15 @@ function slotShortLabel(slot) {
 }
 
 function slotNotifyLabel(slot) { return SLOT_NOTIFY[slot] || ''; }
+
+// 多型号支持：'17175.../17175...'（含空格变体）逐个查 UPH 求和；单型号直接查
+function uphForCode(codeStr) {
+    const raw = String(codeStr || '').trim();
+    if (!raw) return 0;
+    const parts = raw.split('/').map(s => s.trim()).filter(Boolean);
+    if (parts.length <= 1) return SMT_CODES[raw] || 0;
+    return parts.reduce((sum, c) => sum + (SMT_CODES[c] || 0), 0);
+}
 
 // 行头展示（时段 + 跨天提示 + 通报标记）
 function slotHeaderHtml(slot) {
@@ -2219,7 +2227,7 @@ function checkUnderTarget(el) {
     if (!row) return;
     const codeInput = row.querySelector('.smt-code-input');
     const code = (codeInput && codeInput.value ? codeInput.value : '').trim();
-    const uph = SMT_CODES[code] || 0;
+    const uph = uphForCode(code);
     const slot = (row.querySelector('.hour-slot')?.value) || row.dataset.slot || '';
     const target = uph > 0 ? slotTargetValue(slot, uph) : 0;
     const achieved = parseInt(el.value) || 0;
@@ -2305,9 +2313,10 @@ function selectMatch(el, code, uph) {
     if (!input || !targetInput) return;
 
     input.value = code;
-    targetInput.value = uph;
+    const uphSum = uphForCode(code);
+    targetInput.value = uphSum;
     if (matchList) matchList.style.display = 'none';
-    updateRowTargetHint(row, code, uph);
+    updateRowTargetHint(row, code, uphSum);
 
     // 触发未达标检查
     const achievedInput = row.querySelector('.achieved-value');
@@ -2323,11 +2332,14 @@ function hideMatchList(el) {
 
     if (matchList) matchList.style.display = 'none';
 
-    // 如果输入的值精确匹配，填充目标值
-    if (input && targetInput && SMT_CODES[input.value.trim()] !== undefined) {
+    // 如果输入的值精确匹配（或多型号 A/B 求和），填充目标值
+    if (input && targetInput) {
         const code = input.value.trim();
-        targetInput.value = SMT_CODES[code];
-        updateRowTargetHint(row, code, SMT_CODES[code]);
+        const uphSum = uphForCode(code);
+        if (uphSum > 0) {
+            targetInput.value = uphSum;
+            updateRowTargetHint(row, code, uphSum);
+        }
     }
 
     // 触发未达标检查
@@ -2476,7 +2488,7 @@ async function saveAllRecordsAsync() {
         }
 
         const smtCode = row.querySelector('.smt-code-input')?.value.trim();
-        const targetValue = slotTargetValue(hourSlot, SMT_CODES[smtCode] || 0);
+        const targetValue = slotTargetValue(hourSlot, uphForCode(smtCode));
         const achievedValue = parseInt(row.querySelector('.achieved-value')?.value) || 0;
         const reasonCategory = row.querySelector('.reason-category')?.value;
         const reason = row.querySelector('.reason')?.value.trim();
@@ -2743,7 +2755,7 @@ async function editSavedRecord(btn) {
         row.querySelector('.smt-code-input')?.focus();
         return;
     }
-    const targetValue = slotTargetValue(recordData.hour_slot, SMT_CODES[smtCode] || 0);
+    const targetValue = slotTargetValue(recordData.hour_slot, uphForCode(smtCode));
     const achievedValue = parseInt(row.querySelector('.achieved-value')?.value, 10) || 0;
     const reasonCategory = row.querySelector('.reason-category')?.value || '';
     const reason = (row.querySelector('.reason')?.value || '').trim();
